@@ -29,6 +29,12 @@
 //! must supply the matching schema through the application's own migration path.
 //! Existing `sayiir_workflow_*` SQL identities and `sayiir_task_ready` are retained.
 //!
+//! An optional [`WaitArbitrator`] resolves caller-owned accepted outcomes,
+//! deadlines and stop decisions before snapshot locks on the same transaction
+//! connection. The application owns acceptance policy and its locks; transaction
+//! ownership stays with the invoking backend operation or its caller. Correlated
+//! events retain UUID, acceptance time and exact bytes.
+//!
 //! # PostgreSQL version support
 //!
 //! Minimum supported version: **PostgreSQL 13**. The schema uses

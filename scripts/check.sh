@@ -9,8 +9,9 @@ Usage: scripts/check.sh MODE [--timeout-seconds SECONDS]
   build     One locked workspace library build (baseline buildability).
   tests     Workspace library tests and doctests once, plus the public macro consumer.
   macros    The public macro consumer alone (targeted recovery).
+  example   Execute the basic public-API example with the reduced JSON profile.
   features  Default, no-default and all-feature library compilation, plus the
-            isolated Core/Tokio and Runtime/JSON consumer profiles.
+            isolated Core/Tokio, Runtime/JSON and Runtime/rkyv consumer profiles.
   postgres  Restored PostgreSQL integration target once, using disposable Docker data.
   all       tests, features and postgres (qualification, not baseline import).
 
@@ -25,7 +26,7 @@ EOF
 
 mode=${1:-}
 if [[ $mode == -h || $mode == --help ]]; then usage; exit 0; fi
-case "$mode" in build|tests|macros|features|postgres|all) shift ;; *) usage >&2; exit 2 ;; esac
+case "$mode" in build|tests|macros|example|features|postgres|all) shift ;; *) usage >&2; exit 2 ;; esac
 limit=1200
 if [[ ${1:-} == --timeout-seconds && $# == 2 ]]; then
   limit=$2
@@ -149,6 +150,7 @@ case "$mode" in
   build) run cargo build --locked --workspace --lib ;;
   tests) tests ;;
   macros) macros ;;
+  example) run cargo run --locked -p "$prefix-runtime" --example basic --no-default-features --features json ;;
   features) features ;;
   postgres) postgres ;;
   all) tests; features; postgres ;;

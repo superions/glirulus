@@ -16,7 +16,7 @@ description = "Execution runtime, checkpointing runner and distributed workers f
 homepage = "https://github.com/superions/glirulus"
 documentation = "https://docs.rs/glirulus-runtime"
 readme = "README.md"
-include = ["src/**", "tests/**", "README.md", "LICENSE", "NOTICE"]
+include = ["src/**", "tests/**", "examples/**", "README.md", "LICENSE", "NOTICE"]
 keywords = [
     "workflow",
     "orchestration",
@@ -68,6 +68,11 @@ path = "src/lib.rs"
 name = "macros"
 path = "tests/macros.rs"
 required-features = ["json", "macros"]
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+required-features = ["json"]
 
 [dependencies.backon]
 version = "1"

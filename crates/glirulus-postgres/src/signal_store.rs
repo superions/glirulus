@@ -14,10 +14,10 @@ use crate::error::PgError;
 use crate::history::append_history;
 use crate::wakeup::{TASK_READY_CHANNEL, build_task_ready_payload};
 
-/// Native owners arbitrate committed acceptance before the engine takes its
-/// snapshot lock. The same connection retains that decision through commit.
+/// Optional caller policy resolves accepted outcomes, deadlines and stop before
+/// engine snapshot locks. The same transaction connection retains that decision.
 pub trait WaitArbitrator: Send + Sync {
-    /// Resolve under the native acceptance lock before an engine row is locked.
+    /// Resolve under caller-owned acceptance/stop locks before an engine row is locked.
     /// `observed_deadline` is a stale observation, never acceptance authority.
     fn resolve<'a>(
         &'a self,
@@ -31,25 +31,25 @@ pub trait WaitArbitrator: Send + Sync {
 pub type WaitFuture<'a> = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<WaitResolution, BackendError>> + Send + 'a>,
 >;
-/// Technical advancement authorized by the native acceptance owner.
+/// Technical advancement authorized by the caller's outcome policy.
 pub enum WaitResolution {
-    /// No accepted outcome; retain the native absolute deadline while parked.
+    /// No accepted outcome; retain the caller's absolute deadline while parked.
     Pending {
         /// None represents an explicitly unbounded wait.
         deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// A committed native outcome wins over delayed delivery or execution.
+    /// A committed caller outcome wins over delayed delivery or execution.
     Accepted {
-        /// Stable UUID text shared with the native outbox intent.
+        /// Stable UUID text identifying the accepted event across deliveries.
         event_id: String,
-        /// Native acceptance time, rather than engine delivery time.
+        /// Caller acceptance time, rather than engine delivery time.
         accepted_at: chrono::DateTime<chrono::Utc>,
-        /// Versioned technical process input for the continuation.
+        /// Serialized continuation input for the accepted outcome.
         payload: bytes::Bytes,
     },
-    /// Native arbitration found no timely accepted outcome.
+    /// Caller policy found no timely accepted outcome.
     Expired,
-    /// Native Stop forbids further continuation.
+    /// Caller stop policy forbids further continuation.
     Stopped,
 }
 
@@ -165,8 +165,8 @@ impl<C: codec::SnapshotCodec> PostgresBackend<C> {
         Ok(false)
     }
 
-    /// Caller holds native acceptance/Stop locks in this transaction. Consumed
-    /// events retain their identity so a lost delivery acknowledgement is safe.
+    /// The caller holds acceptance/stop locks in this transaction.
+    /// Consumed events retain identity for replay after a lost delivery acknowledgement.
     pub async fn send_correlated_event_in(
         &self,
         connection: &mut sqlx::PgConnection,
@@ -176,7 +176,7 @@ impl<C: codec::SnapshotCodec> PostgresBackend<C> {
         accepted_at: chrono::DateTime<chrono::Utc>,
         payload: bytes::Bytes,
     ) -> Result<bool, BackendError> {
-        // Resolve native authority before locking the snapshot, matching parking
+        // Resolve caller authority before locking the snapshot, matching parking
         // and deadline processing rather than reversing their lock order.
         let deadline = self
             .observed_wait_deadline_in(connection, instance_id, signal_name)
@@ -573,7 +573,7 @@ where
                     .is_none();
                 if unarbitrated {
                     // Plain FIFO consumption must not advance a different wait or
-                    // bypass native arbitration and retained correlated identities.
+                    // bypass caller arbitration and retained correlated identities.
                     sqlx::query_scalar::<_, Vec<u8>>(
                         "UPDATE sayiir_workflow_events SET consumed_at = now()
                          WHERE id = (
@@ -957,7 +957,7 @@ fn signal_resume_target(
 }
 
 impl<C: codec::SnapshotCodec> PostgresBackend<C> {
-    /// Admit a signal in the caller's transaction, retaining native validation.
+    /// Admit a signal in the caller's transaction, preserving engine state validation.
     pub async fn store_signal_in(
         &self,
         instance_id: &str,

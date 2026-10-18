@@ -216,8 +216,9 @@ where
         );
     }
 
-    /// Install native deadline arbitration. It runs before engine row locks and
-    /// retains its caller's transaction until the engine transition commits.
+    /// Install optional caller-owned outcome/deadline/stop arbitration.
+    /// It runs before engine row locks on the same transaction connection;
+    /// the admitting operation or caller retains transaction ownership.
     pub fn set_wait_arbitrator(&self, arbitrator: Arc<dyn crate::signal_store::WaitArbitrator>) {
         *self
             .wait_arbitrator

@@ -6,8 +6,9 @@ It is maintained by **Daniel Scharf**, including generic engine fixes used by
 [Myoxus](https://github.com/superions/myoxus).
 
 **Status: renamed source fork; registry release pending.** The five packages use
-`1.0.0-glirulus.1`. Standalone qualification is complete; registry publication
-is a separate step. No package release is claimed by this source checkpoint.
+`1.0.0-glirulus.1`. Initial engine qualification is recorded below; registry
+publication is a separate step. No package release is claimed by this source
+checkpoint.
 
 ## Packages and boundary
 
@@ -30,10 +31,15 @@ AutoDDL, eligible-definition filtering, caller-owned snapshot/restart/event
 transactions, admission fencing and correlated-event consumption; live
 workflow registration, bounded worker shutdown, retry exhaustion, continuation
 from retained task output, JSON branch routing and consecutive signal/delay
-parking. A consuming application can arbitrate a native wait within the same
-transaction before snapshot locks. Business rules, authorization, native
-receipts, outbox writes and the application's migration ledger remain with the
-consumer; this library does not implement them.
+parking. Applications may install an optional `WaitArbitrator` to resolve
+accepted outcomes, absolute deadlines and stop decisions on the same transaction
+connection before the engine locks a snapshot. The application owns that policy;
+caller-owned transaction APIs also leave commit to the caller. Other backend
+operations retain their own transaction boundary. Event UUIDs, acceptance times
+and exact payload bytes identify correlated deliveries; consumed identities remain
+available for replay.
+Business rules, authorization, effect acknowledgement, event delivery and the
+application's migration ledger remain with the consumer.
 
 The source takeover preserves the snapshot format, definition hashes, SQL
 objects named `sayiir_workflow_*` and the `sayiir_task_ready` channel. These are
@@ -45,6 +51,26 @@ upstream `001`–`009` chain for generic wait/event projections. Applications
 attaching an already provisioned pool keep their own migration authority;
 attachment never runs DDL. This source takeover does not change the Myoxus
 migration ledger or rewrite its data.
+
+## Run a complete workflow
+
+From a source checkout, run:
+
+```sh
+scripts/check.sh example
+```
+
+The [complete example](crates/glirulus-runtime/examples/basic.rs) builds a JSON
+integer increment task, runs input `41` with `CheckpointingRunner`, reads the
+completed snapshot through `SnapshotStore` and decodes its final output. The
+program prints `42`; the checker also prints its command heading. It uses a
+current-thread Tokio runtime and the reduced JSON feature profile, without
+requiring the macro or rkyv features.
+
+The example's `InMemoryBackend` is process-local and loses its state on restart.
+Use [`glirulus-postgres`](crates/glirulus-postgres/README.md) for PostgreSQL-backed
+durability. Registry installation remains pending release acceptance; the
+checkout example is the runnable entry point in the meantime.
 
 ## Standalone verification
 
@@ -100,15 +126,21 @@ available until the complete cohort has passed that acceptance.
 
 ## Qualified source checkpoint
 
-Qualification on 2026-10-18 passed 373 inherited library tests, 30 executable
-doctests, one public macro consumer and all 55 PostgreSQL integration tests.
-The 19 inherited ignored documentation fragments were not counted as executed
-checks. Default, no-default JSON and all-feature workspace compilation passed,
-as did independent Core/Tokio and Runtime/JSON and Runtime/rkyv profiles.
-A temporary bidirectional old/new JSON snapshot, continuation, hash and ordered
-event-codec comparison passed in the consumer's JSON feature context. That
-phase-bound diagnostic is removed after acceptance; it is not a permanent suite
-or evidence of application-level persisted-run acceptance.
+After the pre-release implementation refactor on 2026-10-18, all 373 inherited
+library tests, 30 doctests (including compilation-only examples) and the public
+macro consumer passed. The 19 inherited ignored documentation fragments were
+not counted as passed checks. Default, no-default JSON and all-feature workspace
+compilation passed, as did independent Core/Tokio, Runtime/JSON and Runtime/rkyv
+profiles. The complete basic example printed `42`; its shared Runtime doctest
+also executed successfully.
+
+The earlier 55 PostgreSQL integration tests remain accepted evidence: executable
+PostgreSQL code and migrations are unchanged by this refactor. A temporary
+pre/post-refactor comparison passed for public type identities, rehydrated
+continuation structures and definition hashes, a stable framed snapshot and
+ordered JSON payload bytes in the consuming JSON feature context. Temporary
+comparison sources and targets are removed at acceptance; these checks are not
+a permanent suite or application-level persisted-run acceptance.
 
 ## Upstream and licensing
 

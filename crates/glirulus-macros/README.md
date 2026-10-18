@@ -14,6 +14,9 @@ Generated code refers directly to `glirulus_core`; the default workflow codec
 also refers directly to `glirulus_runtime`. Declare both packages in the consuming
 crate; depending on Macros alone does not make those paths available:
 
+Registry publication is pending. These version declarations describe the planned
+cohort; use the source checkout until release acceptance.
+
 ```toml
 [dependencies]
 glirulus-core = "=1.0.0-glirulus.1"
@@ -21,7 +24,7 @@ glirulus-runtime = "=1.0.0-glirulus.1"
 ```
 
 Runtime's default `macros` feature reexports these macros. The examples below
-illustrate the DSL with application-defined types and functions.
+show task generation and the workflow DSL; no application framework is required.
 
 ## `#[task]`
 
@@ -29,8 +32,8 @@ illustrate the DSL with application-defined types and functions.
 use glirulus_runtime::task;
 
 #[task(timeout = "30s", retries = 3, backoff = "100ms")]
-async fn charge(order: Order, #[inject] stripe: Arc<Stripe>) -> Result<Receipt, BoxError> {
-    stripe.charge(&order).await
+async fn format_value(input: u32) -> String {
+    input.to_string()
 }
 ```
 
@@ -54,22 +57,22 @@ async fn charge(order: Order, #[inject] stripe: Arc<Stripe>) -> Result<Receipt, 
 
 ### Generated Code
 
-The macro generates a PascalCase struct with a `Task` suffix (e.g., `fn charge` → `struct ChargeTask`) with `new()`, `task_id()`, `metadata()`, `register()`, and a `CoreTask` trait implementation. The original function is preserved for direct use and testing.
+The macro generates a PascalCase struct with a `Task` suffix (e.g., `fn format_value` → `struct FormatValueTask`) with `new()`, `task_id()`, `metadata()`, `register()`, and a `CoreTask` trait implementation. The original function is preserved for direct use and testing.
 
 ## `workflow!`
 
 ```rust
-use glirulus_runtime::workflow;
+use glirulus_runtime::{serialization::JsonCodec, workflow};
 
-let workflow = workflow! {
-    name: "order-process",
-    steps: [
-        validate(order: Order) { validate_order(order) },
-        charge,
-        (send_email || update_inventory),
-        finalize,
-    ]
-};
+// Uses the format_value task defined above.
+fn build() -> Result<(), glirulus_core::error::BoxError> {
+    let workflow: glirulus_core::workflow::SerializableWorkflow<JsonCodec, u32> = workflow! {
+        name: "format-value",
+        steps: [format_value],
+    }?;
+    let _state = workflow.to_serializable();
+    Ok(())
+}
 ```
 
 ### Syntax
@@ -96,7 +99,10 @@ let workflow = workflow! {
 
 ## Documentation
 
-Full API docs are available on [docs.rs](https://docs.rs/glirulus-macros).
+Versioned API documentation will be available on [docs.rs](https://docs.rs/glirulus-macros)
+after publication. The complete source-checkout entry point is
+[Runtime's basic example](../glirulus-runtime/examples/basic.rs), run with
+`scripts/check.sh example` from the repository root; it requires JSON, not macros.
 
 ## License
 

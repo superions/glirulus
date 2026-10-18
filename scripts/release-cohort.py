@@ -129,6 +129,8 @@ def validate_manifest(name, manifest, packaged=False):
             if section == "dependencies":
                 seen.add(dependency)
     require(seen == SIBLINGS[name], f"Incomplete sibling graph: {name}")
+    if name == "glirulus-runtime":
+        require(any(e.get("name") == "basic" and e.get("path") == "examples/basic.rs" and e.get("required-features") == ["json"] for e in manifest.get("example", [])), "Runtime basic example target is not explicit")
 
 
 def validate_legal(name, files):
@@ -201,6 +203,7 @@ def source(revision):
         if name == "glirulus-runtime":
             require("tests/**" in includes, "Runtime consumer test must be packaged")
             require(any(t.get("name") == "macros" and t.get("path") == "tests/macros.rs" and set(t.get("required-features", [])) == {"json", "macros"} for t in manifest.get("test", [])), "Runtime macro consumer target is not explicit")
+            require("examples/**" in includes and "examples/basic.rs" in files, "Runtime quick start must be packaged")
         packages[name] = files
     unchanged_checkpoint(revision)
     return revision, packages
@@ -249,7 +252,7 @@ def package_cohort(revision, package_dir):
             if path not in generated:
                 require(files.get(path) == data, f"Packaged file differs from committed source: {name}/{path}")
         for path in files:
-            if path.startswith(("src/", "tests/", "migrations/")) or path in {"README.md", "LICENSE", "NOTICE"}:
+            if path.startswith(("src/", "tests/", "examples/", "migrations/")) or path in {"README.md", "LICENSE", "NOTICE"}:
                 require(packed.get(path) == files[path], f"Committed package input omitted: {name}/{path}")
         data = archive.read_bytes()
         cohort["packages"].append({"name": name, "version": VERSION, "archive_sha256": hashlib.sha256(data).hexdigest(), "archive_bytes": len(data)})

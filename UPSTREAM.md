@@ -115,3 +115,18 @@ This additive library migration was authored under MIT from the generic engine
 contracts; no native schema, application ledger or business migration is copied.
 Private old/new JSON snapshot/continuation/hash comparison is bounded to
 qualification; it is not an additional permanent test suite.
+
+## Pre-release maintenance boundaries
+
+Before the first registry publication, construction and continuation behavior
+was separated into private Core implementation modules, and the pooled worker
+into actor, claimed dispatch and continuation progression modules. Public types
+remain in their original defining modules. The split retains the engine model,
+public API, generic bounds, serialized contracts and execution order; it does
+not replace the recorded generic handoff with a second implementation.
+
+The Runtime package includes a complete `examples/basic.rs` entry point using
+JSON and process-local in-memory persistence. Its explicit Cargo target and
+archive inclusion are part of release-input validation. Registry publication,
+downloaded-package consumption and application-level persisted-run acceptance
+remain separate from this source refactoring.

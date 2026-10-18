@@ -9,10 +9,20 @@ included library migrations. Applications that own schema migration use
 The application remains responsible for supplying the matching schema.
 
 Caller-owned transaction APIs support snapshot admission/restart and correlated
-event acceptance. A caller-supplied `WaitArbitrator` runs before snapshot locks;
-its application policy stays outside this crate. Eligible definition filtering
-happens before polling limits, and buffered/due waits advance through the same
-signal projection used by event admission.
+event acceptance without committing the caller's transaction. An optional
+`WaitArbitrator` resolves accepted outcomes, absolute deadlines and stop decisions
+on the same connection before engine snapshot locks. Application acceptance/stop
+locks must follow that ordering; the application owns the policy. Caller-owned
+transaction APIs leave commit to the caller; other backend operations retain
+their own transaction boundary. The observed deadline is a possibly stale input,
+not acceptance authority. Without an arbitrator, the backend uses the parked
+wait's deadline and buffered events.
+
+Correlated events use stable UUID identities, caller acceptance times and exact
+payload bytes. Redelivery of the same identity must agree on signal name, time
+and bytes; consumed identities remain available for replay. Eligible definition
+filtering happens before polling limits, and buffered/due waits advance through
+the same signal projection used by event admission.
 
 Existing `sayiir_workflow_*` SQL object names and the `sayiir_task_ready` channel
 are deliberately retained for persisted compatibility. Renaming the Rust crate
@@ -28,6 +38,11 @@ tests use disposable PostgreSQL 13 and 18 containers and reject PostgreSQL 12.
 The standalone repository check runner labels these containers for bounded
 cleanup. Integration tests do not connect to an application database.
 
-This source is a prerelease preparation; publication and qualification status
-belong to the repository README. See `NOTICE` for exact upstream and generic-fix
+For a complete process-local workflow entry point, see
+[Runtime's basic example](../glirulus-runtime/examples/basic.rs) and run
+`scripts/check.sh example` from the repository root. PostgreSQL connections use
+this crate's backend in place of that example's process-local storage.
+
+This source is a prerelease preparation; registry installation remains pending.
+Publication and qualification status belong to the repository README. See `NOTICE` for exact upstream and generic-fix
 provenance, `LICENSE` for the MIT grant, and API rustdoc for full contracts.

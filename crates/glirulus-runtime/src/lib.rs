@@ -17,7 +17,7 @@
 //! Workflow runtime for executing durable workflows.
 //!
 //! This crate provides the execution engine that drives [`glirulus_core`] workflows
-//! to completion. It re-exports the core crate, persistence layer, and proc-macros
+//! to completion. It re-exports selected Core APIs, the persistence layer and proc-macros
 //! for convenient access. Macro consumers also declare Core because generated
 //! code refers directly to its public crate path:
 //!
@@ -37,19 +37,12 @@
 //!
 //! # Quick Example
 //!
-//! ```rust,no_run
-//! use glirulus_runtime::{CheckpointingRunner, WorkflowRunner, workflow, task};
-//! use glirulus_runtime::persistence::InMemoryBackend;
+//! This complete example prints `42` using the default-enabled `json` feature.
+//! [`persistence::InMemoryBackend`] is process-local and does not survive restarts.
+//! Use [`glirulus-postgres`](https://docs.rs/glirulus-postgres) for durable storage.
+//! The runnable example and this executable doctest share the same source:
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let backend = InMemoryBackend::new();
-//! let runner = CheckpointingRunner::new(backend);
-//!
-//! // Run a workflow with automatic checkpointing
-//! // let status = runner.run(&workflow, "instance-123", input).await?;
-//! # Ok(())
-//! # }
-//! ```
+#![doc = concat!("```rust\n", include_str!("../examples/basic.rs"), "\n```\n")]
 //!
 //! # Re-exports
 //!
@@ -75,8 +68,8 @@
 //! subscriber setup controlled by `OTEL_EXPORTER_OTLP_ENDPOINT`,
 //! `OTEL_SERVICE_NAME`, and `RUST_LOG` environment variables.
 //!
-//! For the full README with architecture diagrams and detailed configuration,
-//! see the [crate README](https://crates.io/crates/glirulus-runtime).
+//! For the crate overview, example instructions and feature contracts, see the
+//! [crate README](https://crates.io/crates/glirulus-runtime).
 
 #[cfg(not(any(feature = "json", feature = "rkyv")))]
 compile_error!(
