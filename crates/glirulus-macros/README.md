@@ -14,13 +14,13 @@ Generated code refers directly to `glirulus_core`; the default workflow codec
 also refers directly to `glirulus_runtime`. Declare both packages in the consuming
 crate; depending on Macros alone does not make those paths available.
 
-[1.0.0-glirulus.1](https://crates.io/crates/glirulus-macros/1.0.0-glirulus.1) is available
-on crates.io as part of the matching five-package Glirulus cohort.
+Stable cohort version: [1.0.0](https://crates.io/crates/glirulus-macros/1.0.0).
+Use matching versions of all Glirulus packages.
 
 ```toml
 [dependencies]
-glirulus-core = "=1.0.0-glirulus.1"
-glirulus-runtime = "=1.0.0-glirulus.1"
+glirulus-core = "=1.0.0"
+glirulus-runtime = "=1.0.0"
 ```
 
 Runtime's default `macros` feature reexports these macros. The examples below
@@ -99,7 +99,7 @@ fn build() -> Result<(), glirulus_core::error::BoxError> {
 
 ## Documentation
 
-Version-specific API reference: [docs.rs/glirulus-macros/1.0.0-glirulus.1](https://docs.rs/glirulus-macros/1.0.0-glirulus.1/glirulus_macros/).
+Version-specific API reference: [docs.rs/glirulus-macros/1.0.0](https://docs.rs/glirulus-macros/1.0.0/glirulus_macros/).
 The complete source-checkout entry point is
 [Runtime's basic example](../glirulus-runtime/examples/basic.rs), run with
 `scripts/check.sh example` from the repository root; it requires JSON, not macros.

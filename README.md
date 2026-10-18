@@ -1,193 +1,123 @@
 # Glirulus
 
-Glirulus is an independently maintained, Rust-focused fork of
-[Sayiir](https://github.com/sayiir/sayiir), an embeddable durable workflow engine.
-It is maintained by **Daniel Scharf**, including generic engine fixes used by
-[Myoxus](https://github.com/superions/myoxus).
+**Durable workflows embedded in your Rust application.**
 
-**Status: first complete prerelease published.** All five packages are available
-as `1.0.0-glirulus.1`. The [GitHub prerelease](https://github.com/superions/glirulus/releases/tag/v1.0.0-glirulus.1)
-records their registry links, archive checksums and verification. Its immutable
-tag identifies release commit
-[`85d41f37c609be06765f23369bf0a7dba1592d25`](https://github.com/superions/glirulus/tree/85d41f37c609be06765f23369bf0a7dba1592d25);
-later documentation commits do not change the published package inputs.
+<img src="artwork/automation.webp" alt="A woodland mascot beside documents and an automation gear" width="640">
 
-## Packages and boundary
+Build typed workflows, checkpoint their progress and resume them through a
+persistence backend. Glirulus runs inside your application: start with in-memory
+execution, then use your PostgreSQL database and pooled workers for durable,
+distributed processing. No separate workflow server is required.
 
-| Package | Rust library | Role |
-| --- | --- | --- |
-| `glirulus-core` | `glirulus_core` | Workflow definitions, task contracts, hashes and snapshots |
-| `glirulus-persistence` | `glirulus_persistence` | Backend traits and in-memory persistence |
-| `glirulus-macros` | `glirulus_macros` | `#[task]`, `workflow!` and `BranchKey` generation |
-| `glirulus-runtime` | `glirulus_runtime` | Runners, checkpointing and pooled workers |
-| `glirulus-postgres` | `glirulus_postgres` | PostgreSQL persistence and transactional admission |
+Glirulus is an independently maintained fork of
+[Sayiir](https://github.com/sayiir/sayiir), maintained by **Daniel Scharf**.
+It keeps the original engine model and adds generic integration and recovery
+improvements developed while embedding workflows in Myoxus.
 
-Runtime's default features are `json`, `rkyv` and `macros`; `otel` is optional.
-At least one serialization codec must be enabled. A reduced JSON consumer uses
-Core with defaults disabled plus `tokio`, and Runtime with defaults disabled
-plus `json`. A macro consumer declares both Core and Runtime: generated task
-and workflow code refers to their direct public crate names.
+## Lightweight by design
 
-Generic engine fixes include attaching an existing PostgreSQL pool without
-AutoDDL, eligible-definition filtering, caller-owned snapshot/restart/event
-transactions, admission fencing and correlated-event consumption; live
-workflow registration, bounded worker shutdown, retry exhaustion, continuation
-from retained task output, JSON branch routing and consecutive signal/delay
-parking. Applications may install an optional `WaitArbitrator` to resolve
-accepted outcomes, absolute deadlines and stop decisions on the same transaction
-connection before the engine locks a snapshot. The application owns that policy;
-caller-owned transaction APIs also leave commit to the caller. Other backend
-operations retain their own transaction boundary. Event UUIDs, acceptance times
-and exact payload bytes identify correlated deliveries; consumed identities remain
-available for replay.
-Business rules, authorization, effect acknowledgement, event delivery and the
-application's migration ledger remain with the consumer.
+Embed the library without an additional orchestration server, message broker or
+management UI. Choose the packages you need, reuse your Tokio runtime and attach
+an existing SQLx PostgreSQL pool. The reduced JSON profile leaves macros and rkyv
+disabled; OpenTelemetry is opt-in.
 
-The source takeover preserves the snapshot format, definition hashes, SQL
-objects named `sayiir_workflow_*` and the `sayiir_task_ready` channel. These are
-persisted contracts, not package branding. External webhook delivery remains
-at-least-once. This fork does not claim exactly-once external effects.
+## What you can build
 
-Library-managed PostgreSQL schemas append migration `010` to the unchanged
-upstream `001`–`009` chain for generic wait/event projections. Applications
-attaching an already provisioned pool keep their own migration authority;
-attachment never runs DDL. This source takeover does not change the Myoxus
-migration ledger or rewrite its data.
+- Typed task pipelines with branches, parallel forks/joins, loops and child workflows.
+- Durable waits for signals and delays, checkpointed task results, retries and backoff.
+- Single-process runners or pooled workers sharing a persistence backend.
+- Workflows built through the Rust builder API or optional `#[task]`, `workflow!`
+  and `BranchKey` macros.
+- JSON or rkyv snapshots, with optional OpenTelemetry integration.
 
-## Run a complete workflow
+The application owns business rules, authorization and external effects.
+External effects need application-level idempotency; workflow checkpoints do
+not promise exactly-once delivery. In-memory storage is process-local and loses
+state on restart. PostgreSQL supplies durable storage.
 
-From a source checkout, run:
+## Start with 41 → 42
+
+For a minimal JSON consumer:
+
+```toml
+[dependencies]
+glirulus-core = { version = "=1.0.0", default-features = false, features = ["tokio"] }
+glirulus-runtime = { version = "=1.0.0", default-features = false, features = ["json"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+```
+
+The [complete example](crates/glirulus-runtime/examples/basic.rs) builds an
+increment task, runs input `41` with `CheckpointingRunner`, reads the completed
+snapshot through `SnapshotStore` and decodes its final output as `42`.
+It uses current-thread Tokio and `InMemoryBackend`. From a source checkout:
 
 ```sh
 scripts/check.sh example
 ```
 
-The [complete example](crates/glirulus-runtime/examples/basic.rs) builds a JSON
-integer increment task, runs input `41` with `CheckpointingRunner`, reads the
-completed snapshot through `SnapshotStore` and decodes its final output. The
-program prints `42`; the checker also prints its command heading. It uses a
-current-thread Tokio runtime and the reduced JSON feature profile, without
-requiring the macro or rkyv features.
+Runtime defaults enable `json`, `rkyv` and `macros`; at least one codec is required.
+The reduced profile above enables JSON alone. Macro consumers declare both Core
+and Runtime because generated code refers to their direct crate names.
 
-The example's `InMemoryBackend` is process-local and loses its state on restart.
-Use [`glirulus-postgres`](crates/glirulus-postgres/README.md) for PostgreSQL-backed
-durability. A standalone registry consumer can run the same example with:
+## What Glirulus adds
 
-```toml
-[dependencies]
-glirulus-core = { version = "=1.0.0-glirulus.1", default-features = false, features = ["tokio"] }
-glirulus-runtime = { version = "=1.0.0-glirulus.1", default-features = false, features = ["json"] }
-tokio = { version = "1", features = ["rt", "macros"] }
-```
+This comparison uses the published **Sayiir 1.0.0 archives**, preserved in the
+[original source baseline](https://github.com/superions/glirulus/tree/4a4340481d32a84dd45ef6c5c8fdaba88a3637ef).
+It does not describe later Sayiir releases. The workflow builder, macros, codecs,
+checkpointing, PostgreSQL backend and basic worker model are inherited features.
 
-Separate external registry consumers passed for this reduced JSON profile and
-the default macro API. Their locked engine checksums match the reviewed package
-cohort. Version-specific Docs.rs builds and rustdoc pages passed for all five
-packages.
+| Capability | Original Sayiir 1.0.0 | Glirulus 1.0.0 |
+| --- | --- | --- |
+| Typed workflows, macros, JSON/rkyv, PostgreSQL checkpoints | Included | Retained |
+| Attach an existing PostgreSQL pool without library DDL | Connection setup runs library migrations; no attach-only constructor | `from_pool_without_migrations`; caller supplies the schema |
+| Snapshot admission/restart and correlated-event delivery in a caller's transaction | No corresponding caller-transaction APIs | Explicit APIs preserve the caller's commit boundary |
+| Correlated-event replay identity | No correlated UUID/acceptance-time API | UUID, acceptance time and exact bytes retained across redelivery |
+| Application-owned wait decisions | No `WaitArbitrator` hook | Optional arbitration before snapshot locks on the same connection |
+| Register definitions in a running worker | No `LiveWorkflowIndex` | Shared live registration for the existing worker |
+| Bounded worker shutdown with task reaping | No `shutdown_with_timeout` | Completion handle and bounded shutdown |
 
-## Standalone verification
+Recovery fixes also cover zero/exhausted retries, continuation from retained task
+output, JSON branch routing and consecutive signal/delay parking with buffered
+events. Eligible definition filtering happens before polling limits. A rkyv-only
+consumer no longer implicitly requires the JSON fallback. See
+[UPSTREAM.md](UPSTREAM.md) and package `NOTICE` files for the exact source history
+and changes.
 
-Use a current Rust toolchain supporting edition 2024 and Cargo. The workspace
-has one committed root lockfile and needs no Myoxus checkout or tooling.
+Existing `sayiir_workflow_*` SQL objects, `sayiir_task_ready`, snapshot framing and
+definition/task identities remain storage contracts. Library-managed databases
+append migration `010` to the unchanged original nine migrations. Attaching a
+caller-managed pool runs no DDL; the caller must already provide the matching
+schema and retain its own migration authority.
 
-```sh
-scripts/check.sh build
-scripts/check.sh all
-```
+## Packages
 
-`build` is the baseline library build. `all` runs inherited library tests and
-doctests once, the external macro API consuming test, feature compilation and
-the PostgreSQL integration target. `tests`, `features` and `postgres` also run
-those groups separately. Disabling defaults still selects JSON explicitly for
-Runtime, whose codec-free configuration is intentionally unsupported; separate
-package-specific Core/Tokio, Runtime/JSON and Runtime/rkyv checks prevent
-PostgreSQL test dependencies from masking the reduced profile.
+All five packages use version **1.0.0** and exact sibling version requirements.
 
-PostgreSQL integration uses disposable Docker containers rather than an
-application database. It requires access to a local Docker daemon. The Linux
-checker requires Bash, GNU timeout, setsid and flock, retains caller Cargo job
-limits, owns only this checkout's target directory, bounds each command and
-removes its labeled test containers and anonymous volumes after completion or
-interruption.
+| Package | Purpose | API reference |
+| --- | --- | --- |
+| [`glirulus-core`](https://crates.io/crates/glirulus-core/1.0.0) | Workflow definitions, builders, task contracts and snapshots | [Docs.rs](https://docs.rs/glirulus-core/1.0.0/glirulus_core/) |
+| [`glirulus-persistence`](https://crates.io/crates/glirulus-persistence/1.0.0) | Storage traits and in-memory backend | [Docs.rs](https://docs.rs/glirulus-persistence/1.0.0/glirulus_persistence/) |
+| [`glirulus-macros`](https://crates.io/crates/glirulus-macros/1.0.0) | Task, workflow and branch-key generation | [Docs.rs](https://docs.rs/glirulus-macros/1.0.0/glirulus_macros/) |
+| [`glirulus-runtime`](https://crates.io/crates/glirulus-runtime/1.0.0) | Runners, checkpoints, pooled workers and codecs | [Docs.rs](https://docs.rs/glirulus-runtime/1.0.0/glirulus_runtime/) |
+| [`glirulus-postgres`](https://crates.io/crates/glirulus-postgres/1.0.0) | PostgreSQL persistence and transactional integration | [Docs.rs](https://docs.rs/glirulus-postgres/1.0.0/glirulus_postgres/) |
 
-## Release preparation
+## Development and licensing
 
-The Linux release entry point additionally requires Python 3.11 or later. For a
-new cohort, review and commit all release inputs first, including the release
-scripts. Select that full commit SHA explicitly for normal Cargo packaging:
+Contributions of all sizes are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```sh
-scripts/release.sh source
-scripts/release.sh package --revision <reviewed-full-commit-sha>
-```
+Use a current Rust toolchain supporting edition 2024. The standalone workspace
+has its own lockfile and requires no Myoxus checkout. `scripts/check.sh all` runs
+the existing library/doctest, macro, feature and isolated PostgreSQL checks;
+PostgreSQL checks require Docker. The Linux checker bounds commands, honors
+caller Cargo job limits and removes its labeled disposable containers.
+`scripts/release.sh` owns source/package checks and explicit cohort publication.
 
-Both commands require a clean checkout and locked dependency resolution. They
-share the checker's exclusive target lock and command limits. Packaging uses
-Cargo's normal verification without dirty-tree or verification bypasses. The
-archive review checks all five exact package versions and sibling edges,
-committed source, generated VCS identity, attribution, README files and SQL
-migrations. Its checksums are recorded outside the archives in ignored
-`target/release-cohort/` evidence and cannot silently change for the same
-reviewed revision.
+The Rust crates and documentation are [MIT licensed](LICENSE), retaining
+**Copyright (c) 2026 Sayiir** and Daniel Scharf's modification attribution.
+Package-local `LICENSE` and `NOTICE` files preserve those grants and provenance.
+The illustration is separately licensed under
+[AGPL-3.0-or-later](artwork/LICENSE), with its source and attribution in
+[artwork/NOTICE](artwork/NOTICE).
 
-Before publishing, establish that the existing secure Cargo credential belongs
-to the intended crates.io account and has permission to publish all five names.
-The public registry checks cannot prove credential identity or token scopes.
-After verifying that prerequisite, explicitly select publication:
-
-```sh
-scripts/release.sh publish --revision <reviewed-full-commit-sha> --owner <crates-io-login> --account-verified
-```
-
-`--account-verified` records the operator's confirmation; it performs no
-automated account verification. Never put a token in command arguments. The
-publisher checks all five names and any existing versions before writing, then
-publishes Core, Persistence, Macros, Runtime and PostgreSQL in that order. It
-repackages each missing version against the real registry and compares it with
-the pinned cohort before upload, then compares registry checksums and downloaded
-archives against those same original bytes. Resuming skips only versions whose
-bytes match; an unexpected owner,
-yanked version or different archive blocks publication. A source correction
-after partial publication requires a new coherent version cohort.
-
-No mode creates commits, tags or GitHub releases. An external registry consumer
-with reduced JSON and default macro profiles, versioned Docs.rs output for all
-five packages and the GitHub prerelease remain release acceptance requirements.
-The release tag must identify the reviewed package commit; a later documentation
-status update must leave it intact. Resume a published cohort from that exact
-release revision, preserving its original archive witness. A partial package
-cohort remains incomplete until all acceptance requirements pass.
-
-## Qualified source checkpoint
-
-After the pre-release implementation refactor on 2026-10-18, all 373 inherited
-library tests, 30 doctests (including compilation-only examples) and the public
-macro consumer passed. The 19 inherited ignored documentation fragments were
-not counted as passed checks. Default, no-default JSON and all-feature workspace
-compilation passed, as did independent Core/Tokio, Runtime/JSON and Runtime/rkyv
-profiles. The complete basic example printed `42`; its shared Runtime doctest
-also executed successfully.
-
-The earlier 55 PostgreSQL integration tests remain accepted evidence: executable
-PostgreSQL code and migrations are unchanged by this refactor. A temporary
-pre/post-refactor comparison passed for public type identities, rehydrated
-continuation structures and definition hashes, a stable framed snapshot and
-ordered JSON payload bytes in the consuming JSON feature context. Temporary
-comparison sources and targets are removed at acceptance; these checks are not
-a permanent suite or application-level persisted-run acceptance.
-
-## Upstream and licensing
-
-[UPSTREAM.md](UPSTREAM.md) records all five exact Sayiir 1.0.0 archive identities,
-the independently verified PostgreSQL integration target and the exact generic
-Myoxus handoff revision. Preparation history and the attributable source
-baseline remain in Git; no upstream or Myoxus Git parents have been merged.
-
-Every package retains the complete original MIT grant, **Copyright (c) 2026
-Sayiir**, and Daniel Scharf's Glirulus modification attribution. Package-local
-`NOTICE` files identify the original sources and maintenance boundary. The
-original repository documentation is licensed under [MIT](LICENSE), copyright
-2026 Daniel Scharf. Glirulus does not represent the Sayiir maintainers.
-
-*Glirulus* is the scientific genus of the Japanese dormouse, continuing the
-woodland naming family of Myoxus and Virgultum.
+*Glirulus* is the genus of the Japanese dormouse, continuing the woodland naming
+family of Myoxus and Virgultum.

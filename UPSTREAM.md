@@ -36,7 +36,7 @@ Source and useful embedded tests were imported from those exact archives in
 baseline commit `4a4340481d32a84dd45ef6c5c8fdaba88a3637ef`, which retains the
 original Sayiir package/library identities. That immutable commit also retains
 the original authoring manifests and archived VCS records. The current packages
-are renamed to `glirulus-*` / `glirulus_*` at `1.0.0-glirulus.1`, with exact
+are renamed to `glirulus-*` / `glirulus_*` at stable `1.0.0`, with exact
 sibling path-plus-version edges and the original feature intent. Stale imported
 `Cargo.toml.orig` and `.cargo_vcs_info.json` files are removed from active crate
 roots so Cargo can generate current package provenance at release. The single

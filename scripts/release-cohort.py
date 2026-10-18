@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-VERSION = "1.0.0-glirulus.1"
+VERSION = "1.0.0"
 REPOSITORY = "https://github.com/superions/glirulus"
 UPSTREAM_REVISION = "7e6318225398ad7a418efb866156d2cc327ee43f"
 ARCHIVES = {

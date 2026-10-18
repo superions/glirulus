@@ -144,7 +144,7 @@ read_published() {
 }
 
 helper=(python3 "$root/scripts/release-cohort.py")
-version=1.0.0-glirulus.1
+version=1.0.0
 packages=(glirulus-core glirulus-persistence glirulus-macros glirulus-runtime glirulus-postgres)
 assert_revision
 run "${helper[@]}" source --revision "$revision" --output "$target/release-source.json"

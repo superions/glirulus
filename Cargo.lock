@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "glirulus-core"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 dependencies = [
  "bytecheck",
  "bytes",
@@ -957,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "glirulus-macros"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "glirulus-persistence"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "glirulus-postgres"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 dependencies = [
  "backon",
  "bytes",
@@ -1003,7 +1003,7 @@ dependencies = [
 
 [[package]]
 name = "glirulus-runtime"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 dependencies = [
  "backon",
  "bytecheck",

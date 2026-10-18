@@ -4,7 +4,7 @@
 [package]
 edition = "2024"
 name = "glirulus-postgres"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
 build = false
 autolib = false
@@ -60,12 +60,12 @@ default-features = false
 version = "0.12"
 
 [dependencies.glirulus-core]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-core"
 default-features = false
 
 [dependencies.glirulus-persistence]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-persistence"
 
 [dependencies.sha2]
@@ -104,12 +104,12 @@ version = "1"
 features = ["rt", "rt-multi-thread", "macros"]
 
 [dev-dependencies.glirulus-core]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-core"
 default-features = false
 
 [dev-dependencies.glirulus-runtime]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-runtime"
 default-features = false
 features = ["rkyv", "json", "macros"]

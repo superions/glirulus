@@ -4,7 +4,7 @@
 [package]
 edition = "2024"
 name = "glirulus-runtime"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
 build = false
 autolib = false
@@ -126,18 +126,18 @@ features = [
 optional = true
 
 [dependencies.glirulus-core]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-core"
 features = ["tokio"]
 default-features = false
 
 [dependencies.glirulus-macros]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-macros"
 optional = true
 
 [dependencies.glirulus-persistence]
-version = "=1.0.0-glirulus.1"
+version = "=1.0.0"
 path = "../glirulus-persistence"
 
 [dependencies.serde]

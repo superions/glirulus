@@ -16,7 +16,7 @@
 [package]
 edition = "2024"
 name = "glirulus-macros"
-version = "1.0.0-glirulus.1"
+version = "1.0.0"
 authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
 build = false
 autolib = false
