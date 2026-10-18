@@ -12,10 +12,10 @@ Provides three macros that eliminate boilerplate when defining workflows:
 
 Generated code refers directly to `glirulus_core`; the default workflow codec
 also refers directly to `glirulus_runtime`. Declare both packages in the consuming
-crate; depending on Macros alone does not make those paths available:
+crate; depending on Macros alone does not make those paths available.
 
-Registry publication is pending. These version declarations describe the planned
-cohort; use the source checkout until release acceptance.
+[1.0.0-glirulus.1](https://crates.io/crates/glirulus-macros/1.0.0-glirulus.1) is available
+on crates.io as part of the matching five-package Glirulus cohort.
 
 ```toml
 [dependencies]
@@ -99,8 +99,8 @@ fn build() -> Result<(), glirulus_core::error::BoxError> {
 
 ## Documentation
 
-Versioned API documentation will be available on [docs.rs](https://docs.rs/glirulus-macros)
-after publication. The complete source-checkout entry point is
+Version-specific API reference: [docs.rs/glirulus-macros/1.0.0-glirulus.1](https://docs.rs/glirulus-macros/1.0.0-glirulus.1/glirulus_macros/).
+The complete source-checkout entry point is
 [Runtime's basic example](../glirulus-runtime/examples/basic.rs), run with
 `scripts/check.sh example` from the repository root; it requires JSON, not macros.
 

@@ -43,6 +43,9 @@ For a complete process-local workflow entry point, see
 `scripts/check.sh example` from the repository root. PostgreSQL connections use
 this crate's backend in place of that example's process-local storage.
 
-This source is a prerelease preparation; registry installation remains pending.
-Publication and qualification status belong to the repository README. See `NOTICE` for exact upstream and generic-fix
-provenance, `LICENSE` for the MIT grant, and API rustdoc for full contracts.
+Version `1.0.0-glirulus.1` is available on
+[crates.io](https://crates.io/crates/glirulus-postgres/1.0.0-glirulus.1). See the
+[versioned API documentation](https://docs.rs/glirulus-postgres/1.0.0-glirulus.1/glirulus_postgres/)
+for full contracts. Release qualification status belongs to the repository README.
+See `NOTICE` for exact upstream and generic-fix provenance and `LICENSE` for the
+MIT grant.

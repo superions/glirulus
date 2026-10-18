@@ -8,8 +8,8 @@ It does not provide persistence or execute workflows. `WorkflowBuilder` assemble
 continuation trees; `CoreTask` describes task inputs, outputs and metadata;
 `WorkflowSnapshot` retains execution position and completed task output.
 
-Registry publication is pending. These version declarations describe the planned
-cohort; use the source checkout until release acceptance.
+[1.0.0-glirulus.1](https://crates.io/crates/glirulus-core/1.0.0-glirulus.1) is available
+on crates.io as part of the matching five-package Glirulus cohort.
 
 ```toml
 [dependencies]
@@ -31,6 +31,6 @@ prints `42` using process-local storage.
 The inherited snapshot magic, format versions and definition/task identities
 are preserved. Changing a Rust crate name does not migrate persisted data.
 
-Versioned API documentation after publication: [docs.rs/glirulus-core](https://docs.rs/glirulus-core).
+Version-specific API reference: [docs.rs/glirulus-core/1.0.0-glirulus.1](https://docs.rs/glirulus-core/1.0.0-glirulus.1/glirulus_core/).
 The original MIT grant and fork attribution are in [LICENSE](LICENSE);
 [NOTICE](NOTICE) identifies the source archive.

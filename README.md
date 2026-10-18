@@ -5,10 +5,12 @@ Glirulus is an independently maintained, Rust-focused fork of
 It is maintained by **Daniel Scharf**, including generic engine fixes used by
 [Myoxus](https://github.com/superions/myoxus).
 
-**Status: renamed source fork; registry release pending.** The five packages use
-`1.0.0-glirulus.1`. Initial engine qualification is recorded below; registry
-publication is a separate step. No package release is claimed by this source
-checkpoint.
+**Status: first complete prerelease published.** All five packages are available
+as `1.0.0-glirulus.1`. The [GitHub prerelease](https://github.com/superions/glirulus/releases/tag/v1.0.0-glirulus.1)
+records their registry links, archive checksums and verification. Its immutable
+tag identifies release commit
+[`85d41f37c609be06765f23369bf0a7dba1592d25`](https://github.com/superions/glirulus/tree/85d41f37c609be06765f23369bf0a7dba1592d25);
+later documentation commits do not change the published package inputs.
 
 ## Packages and boundary
 
@@ -69,8 +71,19 @@ requiring the macro or rkyv features.
 
 The example's `InMemoryBackend` is process-local and loses its state on restart.
 Use [`glirulus-postgres`](crates/glirulus-postgres/README.md) for PostgreSQL-backed
-durability. Registry installation remains pending release acceptance; the
-checkout example is the runnable entry point in the meantime.
+durability. A standalone registry consumer can run the same example with:
+
+```toml
+[dependencies]
+glirulus-core = { version = "=1.0.0-glirulus.1", default-features = false, features = ["tokio"] }
+glirulus-runtime = { version = "=1.0.0-glirulus.1", default-features = false, features = ["json"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+```
+
+Separate external registry consumers passed for this reduced JSON profile and
+the default macro API. Their locked engine checksums match the reviewed package
+cohort. Version-specific Docs.rs builds and rustdoc pages passed for all five
+packages.
 
 ## Standalone verification
 
@@ -99,9 +112,9 @@ interruption.
 
 ## Release preparation
 
-The Linux release entry point additionally requires Python 3.11 or later. Review
-and commit all release inputs first, including the release scripts. Select that
-full commit SHA explicitly for normal Cargo packaging:
+The Linux release entry point additionally requires Python 3.11 or later. For a
+new cohort, review and commit all release inputs first, including the release
+scripts. Select that full commit SHA explicitly for normal Cargo packaging:
 
 ```sh
 scripts/release.sh source
@@ -141,8 +154,9 @@ No mode creates commits, tags or GitHub releases. An external registry consumer
 with reduced JSON and default macro profiles, versioned Docs.rs output for all
 five packages and the GitHub prerelease remain release acceptance requirements.
 The release tag must identify the reviewed package commit; a later documentation
-status update must leave it intact. A partial package cohort is not a release,
-and registry installation is not accepted until the complete cohort passes.
+status update must leave it intact. Resume a published cohort from that exact
+release revision, preserving its original archive witness. A partial package
+cohort remains incomplete until all acceptance requirements pass.
 
 ## Qualified source checkpoint
 

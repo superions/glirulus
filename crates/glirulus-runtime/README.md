@@ -38,8 +38,9 @@ Macro consumers declare both `glirulus-core` and `glirulus-runtime` at the match
 version because generated code names both crates directly. Runtime reexports
 `#[task]`, `workflow!` and `BranchKey` when `macros` is enabled. See
 [glirulus-macros](../glirulus-macros/README.md) for the DSL and generated contracts.
-Registry publication is pending; dependency versions describe the planned cohort,
-not an available registry installation.
+Version `1.0.0-glirulus.1` is available on
+[crates.io](https://crates.io/crates/glirulus-runtime/1.0.0-glirulus.1). See the
+[versioned API documentation](https://docs.rs/glirulus-runtime/1.0.0-glirulus.1/glirulus_runtime/).
 
 The generic runtime preserves existing snapshot codecs, definition/task hashes
 and continuation behavior. Business rules, authorization, application effects

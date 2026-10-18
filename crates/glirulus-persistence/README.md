@@ -10,8 +10,8 @@ blanket implementation. `TaskClaimStore` and `TaskResultStore` add distributed
 claiming and retained task outputs. Custom backends implement the relevant
 focused traits rather than implementing the blanket supertrait directly.
 
-Registry publication is pending. These version declarations describe the planned
-cohort; use the source checkout until release acceptance.
+[1.0.0-glirulus.1](https://crates.io/crates/glirulus-persistence/1.0.0-glirulus.1) is available
+on crates.io as part of the matching five-package Glirulus cohort.
 
 ```toml
 [dependencies]
@@ -43,6 +43,6 @@ Claim fencing and effect acknowledgement remain responsibilities of the relevant
 backend and consuming application; a claim alone does not promise exactly-once
 external effects.
 
-Versioned API documentation after publication: [docs.rs/glirulus-persistence](https://docs.rs/glirulus-persistence).
+Version-specific API reference: [docs.rs/glirulus-persistence/1.0.0-glirulus.1](https://docs.rs/glirulus-persistence/1.0.0-glirulus.1/glirulus_persistence/).
 The original MIT grant and fork attribution are in [LICENSE](LICENSE);
 [NOTICE](NOTICE) identifies the source archive.
