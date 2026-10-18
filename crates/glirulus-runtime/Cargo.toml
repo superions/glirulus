@@ -1,0 +1,187 @@
+# Based on the Cargo-normalized Sayiir 1.0.0 archive manifest.
+# Glirulus baseline changes only repair standalone workspace packaging.
+# The archived authoring manifest is retained in Cargo.toml.orig.
+#
+# ORIGINAL CARGO NORMALIZATION NOTICE:
+#
+# When uploading crates to the registry Cargo will automatically
+# "normalize" Cargo.toml files for maximal compatibility
+# with all versions of Cargo and also rewrite `path` dependencies
+# to registry (e.g., crates.io) dependencies.
+#
+# If you are reading this file be aware that the original Cargo.toml
+# will likely look very different (and much more reasonable).
+# See Cargo.toml.orig for the original contents.
+
+[package]
+edition = "2024"
+name = "sayiir-runtime"
+version = "1.0.0"
+authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Execution runtime, checkpointing runner and distributed workers for Sayiir workflows"
+homepage = "https://github.com/superions/glirulus"
+documentation = "https://docs.rs/sayiir-runtime"
+readme = "README.md"
+keywords = [
+    "workflow",
+    "orchestration",
+    "durable",
+    "async",
+    "distributed",
+]
+categories = [
+    "asynchronous",
+    "concurrency",
+]
+license = "MIT"
+repository = "https://github.com/superions/glirulus"
+resolver = "2"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[features]
+default = [
+    "rkyv",
+    "json",
+    "macros",
+]
+json = ["dep:serde_json"]
+macros = ["dep:sayiir-macros"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+]
+rkyv = [
+    "dep:rkyv",
+    "dep:bytecheck",
+    "sayiir-core/rkyv",
+]
+
+[lib]
+name = "sayiir_runtime"
+path = "src/lib.rs"
+
+[dependencies.backon]
+version = "1"
+features = ["tokio-sleep"]
+default-features = false
+
+[dependencies.bytecheck]
+version = "0.8"
+optional = true
+
+[dependencies.bytes]
+version = "1"
+features = ["serde"]
+
+[dependencies.chrono]
+version = "0.4"
+features = [
+    "std",
+    "serde",
+    "clock",
+]
+default-features = false
+
+[dependencies.futures]
+version = "0.3"
+
+[dependencies.hostname]
+version = "0.4"
+
+[dependencies.opentelemetry]
+version = "0.32"
+optional = true
+
+[dependencies.opentelemetry-otlp]
+version = "0.32"
+features = ["grpc-tonic"]
+optional = true
+
+[dependencies.opentelemetry_sdk]
+version = "0.32"
+features = ["rt-tokio"]
+optional = true
+
+[dependencies.rkyv]
+version = "0.8"
+features = [
+    "std",
+    "bytecheck",
+    "bytes-1",
+]
+optional = true
+
+[dependencies.sayiir-core]
+version = "=1.0.0"
+path = "../glirulus-core"
+features = ["tokio"]
+default-features = false
+
+[dependencies.sayiir-macros]
+version = "=1.0.0"
+path = "../glirulus-macros"
+optional = true
+
+[dependencies.sayiir-persistence]
+version = "=1.0.0"
+path = "../glirulus-persistence"
+
+[dependencies.serde]
+version = "1"
+features = [
+    "derive",
+    "rc",
+]
+
+[dependencies.serde_json]
+version = "1"
+optional = true
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.tokio]
+version = "1"
+features = [
+    "rt",
+    "time",
+    "sync",
+    "macros",
+]
+
+[dependencies.tracing]
+version = "0.1"
+
+[dependencies.tracing-opentelemetry]
+version = "0.33"
+optional = true
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = [
+    "env-filter",
+    "fmt",
+    "registry",
+]
+optional = true
+
+[dev-dependencies.proptest]
+version = "1"
+
+[dev-dependencies.serde_json]
+version = "1"

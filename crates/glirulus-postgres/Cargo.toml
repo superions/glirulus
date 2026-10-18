@@ -1,0 +1,140 @@
+# Based on the Cargo-normalized Sayiir 1.0.0 archive manifest.
+# Glirulus baseline changes only repair standalone workspace packaging.
+# The archived authoring manifest is retained in Cargo.toml.orig.
+#
+# ORIGINAL CARGO NORMALIZATION NOTICE:
+#
+# When uploading crates to the registry Cargo will automatically
+# "normalize" Cargo.toml files for maximal compatibility
+# with all versions of Cargo and also rewrite `path` dependencies
+# to registry (e.g., crates.io) dependencies.
+#
+# If you are reading this file be aware that the original Cargo.toml
+# will likely look very different (and much more reasonable).
+# See Cargo.toml.orig for the original contents.
+
+[package]
+edition = "2024"
+name = "sayiir-postgres"
+version = "1.0.0"
+authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "PostgreSQL persistence backend for Sayiir workflow engine"
+homepage = "https://github.com/superions/glirulus"
+documentation = "https://docs.rs/sayiir-postgres"
+readme = "README.md"
+keywords = [
+    "workflow",
+    "orchestration",
+    "durable",
+    "async",
+    "distributed",
+]
+categories = [
+    "asynchronous",
+    "concurrency",
+]
+license = "MIT"
+repository = "https://github.com/superions/glirulus"
+resolver = "2"
+
+[lib]
+name = "sayiir_postgres"
+path = "src/lib.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[dependencies.backon]
+version = "1"
+
+[dependencies.bytes]
+version = "1"
+features = ["serde"]
+
+[dependencies.chrono]
+version = "0.4"
+features = [
+    "std",
+    "serde",
+    "clock",
+]
+default-features = false
+
+[dependencies.flume]
+version = "0.12"
+
+[dependencies.sayiir-core]
+version = "=1.0.0"
+path = "../glirulus-core"
+default-features = false
+
+[dependencies.sayiir-persistence]
+version = "=1.0.0"
+path = "../glirulus-persistence"
+
+[dependencies.sha2]
+version = "0.10"
+
+[dependencies.sqlx]
+version = "0.8"
+features = [
+    "runtime-tokio",
+    "postgres",
+    "chrono",
+]
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.tokio]
+version = "1"
+features = [
+    "rt",
+    "rt",
+    "time",
+]
+
+[dependencies.tokio-util]
+version = "0.7"
+default-features = false
+
+[dependencies.tracing]
+version = "0.1"
+
+# Development dependencies restored from upstream commit
+# 7e6318225398ad7a418efb866156d2cc327ee43f; absent in the published manifest.
+[dev-dependencies.tokio]
+version = "1"
+features = ["rt", "rt-multi-thread", "macros"]
+
+[dev-dependencies.sayiir-core]
+version = "=1.0.0"
+path = "../glirulus-core"
+default-features = false
+
+[dev-dependencies.sayiir-runtime]
+version = "=1.0.0"
+path = "../glirulus-runtime"
+default-features = false
+features = ["rkyv", "json", "macros"]
+
+[dev-dependencies.serde_json]
+version = "1"
+
+[dev-dependencies.bytes]
+version = "1"
+features = ["serde"]
+
+[dev-dependencies.testcontainers]
+version = "0.27"
+
+[dev-dependencies.testcontainers-modules]
+version = "0.15"
+features = ["postgres"]

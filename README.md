@@ -5,9 +5,11 @@ Glirulus is being prepared as an independently maintained, Rust-focused fork of
 It is maintained by **Daniel Scharf** for use in
 [Myoxus](https://github.com/superions/myoxus).
 
-**Status: repository preparation only.** This repository contains project
-documentation and a license. Implementation code has not been imported. There
-are no buildable crates, releases or published Glirulus packages yet.
+**Status: imported upstream source baseline.** The five Sayiir 1.0.0 crates
+are wired into a standalone Cargo workspace. This baseline deliberately retains
+the original package and library names; the final directories are already named
+`crates/glirulus-*`. No Glirulus package or release has been published, and the
+Myoxus generic engine fixes have not been ported yet.
 
 ## Purpose
 
@@ -19,9 +21,10 @@ with particular attention to:
 - explicit signal, wait and deadline semantics;
 - predictable retries and worker shutdown.
 
-These describe the planned scope, not capabilities delivered by this repository
-at its current stage. Business rules, authorization and application-specific
-writes belong to the consuming application.
+The upstream implementation is the starting point for that maintenance work,
+not a claim that the later fixes or release qualification are complete. Business
+rules, authorization and application-specific writes belong to the consuming
+application.
 
 ## Name
 
@@ -35,20 +38,37 @@ Virgultum.
 Sayiir is the original project. Glirulus is an independent maintenance effort;
 this repository does not represent the Sayiir maintainers.
 
-The planned starting point is the published Sayiir **1.0.0** crate sources.
-[UPSTREAM.md](UPSTREAM.md) records the reference archives, checksums and original
-licensing. This preparation repository currently has its own documentation-only
-history; upstream source and history have not been imported.
+The source baseline is the published Sayiir **1.0.0** crate archives.
+[UPSTREAM.md](UPSTREAM.md) records all five exact archive identities, the
+independently verified PostgreSQL integration target and original licensing.
+The original Glirulus preparation history is preserved; upstream Git parents
+have not been merged.
 
 Generic corrections should remain small enough to offer upstream independently.
 Future imports and upstream updates will need an explicit provenance record and
 validation before release.
+
+## Standalone verification
+
+Use a current Rust toolchain supporting edition 2024 and Cargo. The workspace
+has one committed root lockfile and needs no Myoxus checkout or tooling.
+
+```sh
+scripts/check.sh build
+```
+
+The `tests`, `features` and `postgres` modes separate inherited lib/doctests,
+feature compilation and the restored PostgreSQL integration target. The `all`
+mode runs those three once in that order. PostgreSQL integration uses disposable
+Docker containers, not an existing application database; it requires access to
+a local Docker daemon. Caller Cargo job limits are retained. Each command is
+bounded and owned test containers are removed on completion or interruption.
 
 ## License
 
 The original Glirulus repository documentation is licensed under
 [MIT](LICENSE), copyright 2026 Daniel Scharf.
 
-Sayiir is MIT-licensed, copyright 2026 Sayiir. Its original copyright and
-permission notices must be retained when upstream material is imported. See
+Sayiir is MIT-licensed, copyright 2026 Sayiir. The complete original grant is
+retained in each crate alongside Daniel Scharf’s modification attribution. See
 [UPSTREAM.md](UPSTREAM.md).

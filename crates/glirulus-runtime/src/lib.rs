@@ -1,0 +1,118 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(missing_docs)]
+#![deny(clippy::pedantic)]
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
+//! Workflow runtime for executing durable workflows.
+//!
+//! This crate provides the execution engine that drives [`sayiir_core`] workflows
+//! to completion. It re-exports the core crate, persistence layer, and proc-macros
+//! so most users only need a single dependency:
+//!
+//! ```toml
+//! [dependencies]
+//! sayiir-runtime = "0.1"
+//! ```
+//!
+//! # Execution Strategies
+//!
+//! | Scenario | Use |
+//! |----------|-----|
+//! | Single server, crash recovery needed | [`CheckpointingRunner`] |
+//! | Multiple workers, horizontal scaling | [`PooledWorker`] |
+//! | Simple in-memory execution | [`InProcessRunner`] |
+//!
+//! # Quick Example
+//!
+//! ```rust,no_run
+//! use sayiir_runtime::{CheckpointingRunner, WorkflowRunner, workflow, task};
+//! use sayiir_runtime::persistence::InMemoryBackend;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let backend = InMemoryBackend::new();
+//! let runner = CheckpointingRunner::new(backend);
+//!
+//! // Run a workflow with automatic checkpointing
+//! // let status = runner.run(&workflow, "instance-123", input).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Re-exports
+//!
+//! This crate re-exports key items for convenience:
+//!
+//! - [`sayiir_core`] — via `sayiir_runtime::persistence` (through `sayiir_persistence`)
+//! - [`sayiir_persistence`] — as [`persistence`]
+//! - [`task`] and [`workflow!`] — from `sayiir-macros`
+//! - [`task_context!`] — context macro from `sayiir-core`
+//!
+//! # Cargo Features
+//!
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `json` | **yes** | JSON serialization codec ([`serde_json`]) |
+//! | `rkyv` | **yes** | Zero-copy binary codec ([`rkyv`]) |
+//! | `macros` | **yes** | Proc-macro re-exports (`#[task]`, `workflow!`) from `sayiir-macros` |
+//! | `otel` | no | OpenTelemetry integration — W3C trace context propagation across workers, OTLP span export, and [`trace_context::init_tracing`] / [`trace_context::shutdown_tracing`] helpers |
+//!
+//! At least one of `json` or `rkyv` must be enabled (enforced at compile time).
+//!
+//! Enable `otel` in your bindings or application to get distributed trace
+//! propagation via the `trace_parent` field on snapshots, and a ready-made
+//! subscriber setup controlled by `OTEL_EXPORTER_OTLP_ENDPOINT`,
+//! `OTEL_SERVICE_NAME`, and `RUST_LOG` environment variables.
+//!
+//! For the full README with architecture diagrams and detailed configuration,
+//! see the [crate README](https://crates.io/crates/sayiir-runtime).
+
+#[cfg(not(any(feature = "json", feature = "rkyv")))]
+compile_error!(
+    "at least one serialization codec must be enabled: enable the `json` or `rkyv` feature"
+);
+
+mod client;
+pub mod error;
+pub mod execution;
+pub mod prelude;
+mod runner;
+pub mod serialization;
+#[cfg(feature = "otel")]
+pub mod trace_context;
+pub mod worker;
+
+// Re-exports
+pub use client::WorkflowClient;
+pub use error::RuntimeError;
+pub use execution::{
+    PrepareRunOutcome, ResumeOutcome, check_existing_instance, execute_continuation_async,
+    execute_continuation_sync, execute_continuation_with_checkpointing, finalize_execution,
+    prepare_resume, prepare_run, serialize_branch_results,
+};
+pub use runner::WorkflowRunExt;
+pub use runner::WorkflowRunner;
+pub use runner::distributed::CheckpointingRunner;
+pub use runner::in_process::InProcessRunner;
+pub use worker::{
+    ExternalTaskExecutor, ExternalWorkflow, PooledWorker, PooledWorkerBuilder, WorkerHandle,
+    WorkflowIndex, WorkflowRegistry,
+};
+
+pub use sayiir_core::branch_key::BranchKey;
+pub use sayiir_core::deps::{Deps, DepsBuilder, DepsInjectable, MissingDep};
+pub use sayiir_core::task_context;
+pub use sayiir_core::workflow::ConflictPolicy;
+#[cfg(feature = "macros")]
+pub use sayiir_macros::{BranchKey, task, workflow};
+pub use sayiir_persistence as persistence;

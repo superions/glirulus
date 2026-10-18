@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/glirulus-core",
+    "crates/glirulus-persistence",
+    "crates/glirulus-macros",
+    "crates/glirulus-runtime",
+    "crates/glirulus-postgres",
+]

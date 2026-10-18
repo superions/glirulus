@@ -1,0 +1,878 @@
+//! Task registry for serializable workflows.
+//!
+//! The registry maps task IDs to their implementations, enabling workflow serialization.
+//! Only IDs and structure are serialized; implementations are looked up at runtime.
+//!
+//! # Registry as Code, Not Data
+//!
+//! The registry contains closures/functions and cannot be serialized itself.
+//! Both the serializing and deserializing sides must build the same registry from code.
+//! This is the standard pattern in workflow engines.
+//!
+//! ```rust
+//! # use sayiir_core::codec::{Encoder, Decoder, sealed};
+//! # use bytes::Bytes;
+//! use sayiir_core::prelude::*;
+//! use sayiir_core::workflow::SerializableContinuation;
+//! use std::sync::Arc;
+//! # struct MyCodec;
+//! # impl Encoder for MyCodec {}
+//! # impl Decoder for MyCodec {}
+//! # impl<T> sealed::EncodeValue<T> for MyCodec {
+//! #     fn encode_value(&self, _: &T) -> Result<Bytes, BoxError> { Ok(Bytes::new()) }
+//! # }
+//! # impl<T> sealed::DecodeValue<T> for MyCodec {
+//! #     fn decode_value(&self, _: Bytes) -> Result<T, BoxError> { Err("dummy".into()) }
+//! # }
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let codec = Arc::new(MyCodec);
+//! # let ctx = WorkflowContext::new("my-workflow", codec.clone(), Arc::new(()));
+//!
+//! // Shared function - called on both sides (serializer and deserializer)
+//! fn build_task_registry(codec: Arc<MyCodec>) -> TaskRegistry {
+//!     TaskRegistry::with_codec(codec)
+//!         .register_fn("double", |i: u32| async move { Ok(i * 2) })
+//!         .register_fn("add_ten", |i: u32| async move { Ok(i + 10) })
+//!         .build()
+//! }
+//!
+//! // === Serialization side ===
+//! let registry = build_task_registry(codec.clone());
+//! let workflow: SerializableWorkflow<_, u32> = WorkflowBuilder::new(ctx)
+//!     .with_existing_registry(registry)
+//!     .then_registered::<u32>("double")
+//!     .then_registered::<u32>("add_ten")
+//!     .build()?;
+//! let serializable = workflow.continuation().to_serializable();
+//! let serialized = serde_json::to_string(&serializable)?;
+//!
+//! // === Deserialization side (possibly different process) ===
+//! let registry = build_task_registry(codec.clone());  // Rebuild same registry
+//! let continuation: SerializableContinuation = serde_json::from_str(&serialized)?;
+//! let runnable = continuation.to_runnable(&registry)?;
+//! # Ok(())
+//! # }
+//! ```
+
+use crate::codec::{Codec, sealed};
+use crate::error::{BoxError, CodecError};
+use crate::loop_result::LoopResult;
+use crate::task::{
+    BranchOutputs, BytesFuture, CoreTask, TaskMetadata, UntypedCoreTask,
+    to_heterogeneous_join_task_arc,
+};
+use bytes::Bytes;
+use std::collections::HashMap;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+/// A factory function that creates an `UntypedCoreTask`.
+pub type TaskFactory = Box<dyn Fn() -> UntypedCoreTask + Send + Sync>;
+
+/// A registered task entry containing the factory and metadata.
+pub struct TaskEntry {
+    factory: TaskFactory,
+    metadata: TaskMetadata,
+}
+
+/// Registry for task implementations.
+///
+/// Maps task IDs to factory functions that create task instances.
+/// This enables workflow serialization: only IDs and structure are serialized,
+/// and implementations are looked up from the registry at runtime.
+///
+/// **Important**: The registry is code, not data. It contains closures and cannot
+/// be serialized. Both serialization and deserialization sides must construct
+/// the same registry by calling the same registration functions. See module docs
+/// for the recommended pattern.
+pub struct TaskRegistry {
+    tasks: HashMap<String, TaskEntry>,
+}
+
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskRegistry {
+    /// Create a new empty registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            tasks: HashMap::new(),
+        }
+    }
+
+    /// Merge all entries from another registry into this one.
+    ///
+    /// Existing entries are **not** overwritten — the parent's registrations
+    /// take precedence over the child's in case of ID collisions.
+    pub fn merge(&mut self, other: Self) {
+        for (id, entry) in other.tasks {
+            self.tasks.entry(id).or_insert(entry);
+        }
+    }
+
+    /// Register a task implementing `CoreTask`.
+    ///
+    /// This method accepts any type implementing `CoreTask`, including:
+    /// - Structs with explicit `CoreTask` implementation
+    /// - Closures wrapped with [`fn_task`](crate::task::fn_task)
+    ///
+    /// For convenience with raw closures, use [`register_fn`](Self::register_fn).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use bytes::Bytes;
+    /// # use std::sync::Arc;
+    /// # struct MyCodec;
+    /// # impl Encoder for MyCodec {}
+    /// # impl Decoder for MyCodec {}
+    /// # impl<T> sealed::EncodeValue<T> for MyCodec {
+    /// #     fn encode_value(&self, _: &T) -> Result<Bytes, BoxError> { Ok(Bytes::new()) }
+    /// # }
+    /// # impl<T> sealed::DecodeValue<T> for MyCodec {
+    /// #     fn decode_value(&self, _: Bytes) -> Result<T, BoxError> { Err("dummy".into()) }
+    /// # }
+    /// use sayiir_core::prelude::*;
+    /// use std::pin::Pin;
+    /// use std::future::Future;
+    ///
+    /// struct DoubleTask;
+    /// impl CoreTask for DoubleTask {
+    ///     type Input = u32;
+    ///     type Output = u32;
+    ///     type Future = Pin<Box<dyn Future<Output = Result<u32, BoxError>> + Send>>;
+    ///     fn run(&self, input: u32) -> Self::Future {
+    ///         Box::pin(async move { Ok(input * 2) })
+    ///     }
+    /// }
+    ///
+    /// # let mut registry = TaskRegistry::new();
+    /// # let codec = Arc::new(MyCodec);
+    /// // Register a struct implementing CoreTask
+    /// registry.register("struct_task", codec.clone(), DoubleTask);
+    ///
+    /// // Register a closure via fn_task wrapper
+    /// registry.register("closure_task", codec.clone(), fn_task(|i: u32| async move { Ok(i * 2) }));
+    /// ```
+    pub fn register<T, C>(&mut self, id: &str, codec: Arc<C>, task: T)
+    where
+        T: CoreTask + 'static,
+        T::Input: Send + 'static,
+        T::Output: Send + 'static,
+        T::Future: Send + 'static,
+        C: Codec + sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output> + 'static,
+    {
+        self.register_with_metadata(id, codec, task, TaskMetadata::default());
+    }
+
+    /// Register a task implementing `CoreTask` with metadata.
+    ///
+    /// Same as [`register`](Self::register), but allows attaching metadata
+    /// for timeouts, retries, and display information.
+    pub fn register_with_metadata<T, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        task: T,
+        metadata: TaskMetadata,
+    ) where
+        T: CoreTask + 'static,
+        T::Input: Send + 'static,
+        T::Output: Send + 'static,
+        T::Future: Send + 'static,
+        C: Codec + sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output> + 'static,
+    {
+        self.register_task_arc(id, codec, Arc::new(task), metadata);
+    }
+
+    /// Build a task from a [`Deps`] container and register it.
+    ///
+    /// Calls [`DepsInjectable::verify_deps`] first, so a missing service
+    /// surfaces as `Err(Vec<MissingDep>)` before the registry is mutated.
+    /// Use this when populating a registry for a `PooledWorker` or a
+    /// hand-rolled task library — the `workflow!` macro already handles this
+    /// internally via the `deps:` field.
+    ///
+    /// # Errors
+    ///
+    /// Returns the list of missing dependency types if the container does not
+    /// satisfy `T`'s `#[inject]` parameters. The registry is left untouched on
+    /// error.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use sayiir_core::deps::Deps;
+    /// use sayiir_core::registry::TaskRegistry;
+    ///
+    /// let mut registry = TaskRegistry::new();
+    /// registry.register_from_deps::<ChargeTask, _>(codec.clone(), &deps)?;
+    /// registry.register_from_deps::<RefundTask, _>(codec, &deps)?;
+    /// ```
+    ///
+    /// [`Deps`]: crate::deps::Deps
+    /// [`DepsInjectable::verify_deps`]: crate::deps::DepsInjectable::verify_deps
+    pub fn register_from_deps<T, C>(
+        &mut self,
+        codec: Arc<C>,
+        deps: &crate::deps::Deps,
+    ) -> Result<(), Vec<crate::deps::MissingDep>>
+    where
+        T: crate::deps::DepsInjectable,
+        T::Input: Send + 'static,
+        T::Output: Send + 'static,
+        T::Future: Send + 'static,
+        C: Codec + sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output> + 'static,
+    {
+        let missing = T::verify_deps(deps);
+        if !missing.is_empty() {
+            return Err(missing);
+        }
+        let task = T::from_deps(deps);
+        self.register_with_metadata(T::task_id(), codec, task, T::metadata());
+        Ok(())
+    }
+
+    /// Register a task using an Arc-wrapped `CoreTask`.
+    pub(crate) fn register_task_arc<T, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        task: Arc<T>,
+        metadata: TaskMetadata,
+    ) where
+        T: CoreTask + 'static,
+        T::Input: Send + 'static,
+        T::Output: Send + 'static,
+        T::Future: Send + 'static,
+        C: Codec + sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output> + 'static,
+    {
+        let task_id = id.to_string();
+        let factory = Box::new(move || -> UntypedCoreTask {
+            let task = Arc::clone(&task);
+            let codec = Arc::clone(&codec);
+            Box::new(TaskWrapper {
+                task,
+                codec,
+                task_id: task_id.clone(),
+            })
+        });
+        self.tasks
+            .insert(id.to_string(), TaskEntry { factory, metadata });
+    }
+
+    /// Register a closure as a task (convenience method).
+    ///
+    /// This is a convenience method for registering closures without needing
+    /// to wrap them in [`fn_task`](crate::task::fn_task).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use sayiir_core::prelude::*;
+    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use bytes::Bytes;
+    /// # use std::sync::Arc;
+    /// # struct MyCodec;
+    /// # impl Encoder for MyCodec {}
+    /// # impl Decoder for MyCodec {}
+    /// # impl<T> sealed::EncodeValue<T> for MyCodec {
+    /// #     fn encode_value(&self, _: &T) -> Result<Bytes, BoxError> { Ok(Bytes::new()) }
+    /// # }
+    /// # impl<T> sealed::DecodeValue<T> for MyCodec {
+    /// #     fn decode_value(&self, _: Bytes) -> Result<T, BoxError> { Err("dummy".into()) }
+    /// # }
+    /// # let mut registry = TaskRegistry::new();
+    /// # let codec = Arc::new(MyCodec);
+    /// registry.register_fn("double", codec.clone(), |input: u32| async move { Ok(input * 2) });
+    /// ```
+    pub fn register_fn<I, O, F, Fut, C>(&mut self, id: &str, codec: Arc<C>, func: F)
+    where
+        F: Fn(I) -> Fut + Send + Sync + 'static,
+        I: Send + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: Codec + sealed::DecodeValue<I> + sealed::EncodeValue<O> + 'static,
+    {
+        self.register_fn_with_metadata(id, codec, func, TaskMetadata::default());
+    }
+
+    /// Register a closure as a task with metadata.
+    ///
+    /// Same as [`register_fn`](Self::register_fn), but allows attaching metadata.
+    pub fn register_fn_with_metadata<I, O, F, Fut, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        func: F,
+        metadata: TaskMetadata,
+    ) where
+        F: Fn(I) -> Fut + Send + Sync + 'static,
+        I: Send + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: Codec + sealed::DecodeValue<I> + sealed::EncodeValue<O> + 'static,
+    {
+        self.register_fn_arc(id, codec, Arc::new(func), metadata);
+    }
+
+    /// Register a closure using an Arc-wrapped value.
+    pub(crate) fn register_fn_arc<I, O, F, Fut, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        func: Arc<F>,
+        metadata: TaskMetadata,
+    ) where
+        F: Fn(I) -> Fut + Send + Sync + 'static,
+        I: Send + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: Codec + sealed::DecodeValue<I> + sealed::EncodeValue<O> + 'static,
+    {
+        let task_id = id.to_string();
+        let factory = Box::new(move || -> UntypedCoreTask {
+            let func = Arc::clone(&func);
+            let codec = Arc::clone(&codec);
+            Box::new(FnTaskWrapper {
+                func,
+                codec,
+                task_id: task_id.clone(),
+                _phantom: PhantomData,
+            })
+        });
+        self.tasks
+            .insert(id.to_string(), TaskEntry { factory, metadata });
+    }
+
+    /// Register a `CoreTask` struct whose output is `LoopResult<O>` with two-step encoding.
+    pub(crate) fn register_loop_task_arc<T, O, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        task: Arc<T>,
+        metadata: TaskMetadata,
+    ) where
+        T: CoreTask<Output = LoopResult<O>> + 'static,
+        T::Input: Send + 'static,
+        O: Send + 'static,
+        T::Future: Send + 'static,
+        C: Codec + sealed::DecodeValue<T::Input> + sealed::EncodeValue<O> + 'static,
+    {
+        use crate::task::wrap_core_loop_task;
+        let task_id = id.to_string();
+        let factory = Box::new(move || -> UntypedCoreTask {
+            let task = Arc::clone(&task);
+            let codec = Arc::clone(&codec);
+            wrap_core_loop_task(&task_id, task, codec)
+        });
+        self.tasks
+            .insert(id.to_string(), TaskEntry { factory, metadata });
+    }
+
+    /// Register a loop body closure that uses two-step encoding.
+    pub(crate) fn register_loop_fn_arc<I, O, F, Fut, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        func: Arc<F>,
+        metadata: TaskMetadata,
+    ) where
+        F: Fn(I) -> Fut + Send + Sync + 'static,
+        I: Send + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<LoopResult<O>, BoxError>> + Send + 'static,
+        C: Codec + sealed::DecodeValue<I> + sealed::EncodeValue<O> + 'static,
+    {
+        let task_id = id.to_string();
+        let factory = Box::new(move || -> UntypedCoreTask {
+            let func = Arc::clone(&func);
+            let codec = Arc::clone(&codec);
+            Box::new(LoopFnTaskWrapper {
+                func,
+                codec,
+                task_id: task_id.clone(),
+                _phantom: PhantomData,
+            })
+        });
+        self.tasks
+            .insert(id.to_string(), TaskEntry { factory, metadata });
+    }
+
+    /// Register a join task using a closure.
+    pub fn register_join<O, F, Fut, C>(&mut self, id: &str, codec: Arc<C>, func: F)
+    where
+        F: Fn(BranchOutputs<C>) -> Fut + Send + Sync + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: Codec
+            + sealed::EncodeValue<O>
+            + sealed::DecodeValue<crate::branch_results::NamedBranchResults>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.register_join_with_metadata(id, codec, func, TaskMetadata::default());
+    }
+
+    /// Register a join task using a closure with metadata.
+    pub fn register_join_with_metadata<O, F, Fut, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        func: F,
+        metadata: TaskMetadata,
+    ) where
+        F: Fn(BranchOutputs<C>) -> Fut + Send + Sync + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: Codec
+            + sealed::EncodeValue<O>
+            + sealed::DecodeValue<crate::branch_results::NamedBranchResults>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.register_arc_join(id, codec, Arc::new(func), metadata);
+    }
+
+    /// Register a join task using an Arc-wrapped closure.
+    pub(crate) fn register_arc_join<O, F, Fut, C>(
+        &mut self,
+        id: &str,
+        codec: Arc<C>,
+        func: Arc<F>,
+        metadata: TaskMetadata,
+    ) where
+        F: Fn(BranchOutputs<C>) -> Fut + Send + Sync + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: Codec
+            + sealed::EncodeValue<O>
+            + sealed::DecodeValue<crate::branch_results::NamedBranchResults>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let task_id = id.to_string();
+        let factory = Box::new(move || -> UntypedCoreTask {
+            to_heterogeneous_join_task_arc(&task_id, Arc::clone(&func), Arc::clone(&codec))
+        });
+        self.tasks
+            .insert(id.to_string(), TaskEntry { factory, metadata });
+    }
+
+    /// Get a task by ID, creating a new instance.
+    ///
+    /// Returns `None` if the task ID is not registered.
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<UntypedCoreTask> {
+        self.tasks.get(id).map(|entry| (entry.factory)())
+    }
+
+    /// Get the metadata for a task by ID.
+    ///
+    /// Returns `None` if the task ID is not registered.
+    #[must_use]
+    pub fn get_metadata(&self, id: &str) -> Option<&TaskMetadata> {
+        self.tasks.get(id).map(|entry| &entry.metadata)
+    }
+
+    /// Get both the task and its metadata by ID.
+    ///
+    /// Returns `None` if the task ID is not registered.
+    #[must_use]
+    pub fn get_with_metadata(&self, id: &str) -> Option<(UntypedCoreTask, &TaskMetadata)> {
+        self.tasks
+            .get(id)
+            .map(|entry| ((entry.factory)(), &entry.metadata))
+    }
+
+    /// Set or update the metadata for a registered task.
+    ///
+    /// Returns `true` if the task was found and metadata updated, `false` otherwise.
+    pub fn set_metadata(&mut self, id: &str, metadata: TaskMetadata) -> bool {
+        if let Some(entry) = self.tasks.get_mut(id) {
+            entry.metadata = metadata;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if a task ID is registered.
+    #[must_use]
+    pub fn contains(&self, id: &str) -> bool {
+        self.tasks.contains_key(id)
+    }
+
+    /// Get the number of registered tasks.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tasks.len()
+    }
+
+    /// Check if the registry is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    /// Get an iterator over registered task IDs.
+    pub fn task_ids(&self) -> impl Iterator<Item = &str> {
+        self.tasks.keys().map(std::string::String::as_str)
+    }
+
+    /// Create a builder with a codec for ergonomic task registration.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use sayiir_core::prelude::*;
+    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use bytes::Bytes;
+    /// # use std::sync::Arc;
+    /// # struct MyCodec;
+    /// # impl Encoder for MyCodec {}
+    /// # impl Decoder for MyCodec {}
+    /// # impl<T> sealed::EncodeValue<T> for MyCodec {
+    /// #     fn encode_value(&self, _: &T) -> Result<Bytes, BoxError> { Ok(Bytes::new()) }
+    /// # }
+    /// # impl<T> sealed::DecodeValue<T> for MyCodec {
+    /// #     fn decode_value(&self, _: Bytes) -> Result<T, BoxError> { Err("dummy".into()) }
+    /// # }
+    /// # let codec = Arc::new(MyCodec);
+    /// let registry = TaskRegistry::with_codec(codec)
+    ///     .register_fn("double", |i: u32| async move { Ok(i * 2) })
+    ///     .register_fn("add_ten", |i: u32| async move { Ok(i + 10) })
+    ///     .build();
+    /// ```
+    pub fn with_codec<C>(codec: Arc<C>) -> RegistryBuilder<C>
+    where
+        C: Codec,
+    {
+        RegistryBuilder {
+            codec,
+            registry: TaskRegistry::new(),
+        }
+    }
+}
+
+/// Builder for ergonomic task registration with a shared codec.
+///
+/// Created via [`TaskRegistry::with_codec`]. The codec is held internally
+/// and used for all registrations, avoiding repetitive `codec.clone()` calls.
+pub struct RegistryBuilder<C> {
+    codec: Arc<C>,
+    registry: TaskRegistry,
+}
+
+impl<C: Codec> RegistryBuilder<C> {
+    /// Register a task implementing `CoreTask`.
+    ///
+    /// For closures, use [`register_fn`](Self::register_fn) or wrap with [`fn_task`](crate::task::fn_task).
+    #[must_use]
+    pub fn register<T>(mut self, id: &str, task: T) -> Self
+    where
+        T: CoreTask + 'static,
+        T::Input: Send + 'static,
+        T::Output: Send + 'static,
+        T::Future: Send + 'static,
+        C: sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output> + 'static,
+    {
+        self.registry.register(id, Arc::clone(&self.codec), task);
+        self
+    }
+
+    /// Register a task implementing `CoreTask` with metadata.
+    #[must_use]
+    pub fn register_with_metadata<T>(mut self, id: &str, task: T, metadata: TaskMetadata) -> Self
+    where
+        T: CoreTask + 'static,
+        T::Input: Send + 'static,
+        T::Output: Send + 'static,
+        T::Future: Send + 'static,
+        C: sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output> + 'static,
+    {
+        self.registry
+            .register_with_metadata(id, Arc::clone(&self.codec), task, metadata);
+        self
+    }
+
+    /// Register a closure as a task (convenience method).
+    #[must_use]
+    pub fn register_fn<I, O, F, Fut>(mut self, id: &str, func: F) -> Self
+    where
+        F: Fn(I) -> Fut + Send + Sync + 'static,
+        I: Send + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: sealed::DecodeValue<I> + sealed::EncodeValue<O> + 'static,
+    {
+        self.registry.register_fn(id, Arc::clone(&self.codec), func);
+        self
+    }
+
+    /// Register a closure as a task with metadata.
+    #[must_use]
+    pub fn register_fn_with_metadata<I, O, F, Fut>(
+        mut self,
+        id: &str,
+        func: F,
+        metadata: TaskMetadata,
+    ) -> Self
+    where
+        F: Fn(I) -> Fut + Send + Sync + 'static,
+        I: Send + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: sealed::DecodeValue<I> + sealed::EncodeValue<O> + 'static,
+    {
+        self.registry
+            .register_fn_with_metadata(id, Arc::clone(&self.codec), func, metadata);
+        self
+    }
+
+    /// Register a join task using a closure.
+    #[must_use]
+    pub fn register_join<O, F, Fut>(mut self, id: &str, func: F) -> Self
+    where
+        F: Fn(BranchOutputs<C>) -> Fut + Send + Sync + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: sealed::EncodeValue<O>
+            + sealed::DecodeValue<crate::branch_results::NamedBranchResults>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.registry
+            .register_join(id, Arc::clone(&self.codec), func);
+        self
+    }
+
+    /// Register a join task using a closure with metadata.
+    #[must_use]
+    pub fn register_join_with_metadata<O, F, Fut>(
+        mut self,
+        id: &str,
+        func: F,
+        metadata: TaskMetadata,
+    ) -> Self
+    where
+        F: Fn(BranchOutputs<C>) -> Fut + Send + Sync + 'static,
+        O: Send + 'static,
+        Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+        C: sealed::EncodeValue<O>
+            + sealed::DecodeValue<crate::branch_results::NamedBranchResults>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.registry
+            .register_join_with_metadata(id, Arc::clone(&self.codec), func, metadata);
+        self
+    }
+
+    /// Finish building and return the registry.
+    #[must_use]
+    pub fn build(self) -> TaskRegistry {
+        self.registry
+    }
+}
+
+/// Wrapper for closure-based tasks.
+struct FnTaskWrapper<F, I, O, C> {
+    func: Arc<F>,
+    codec: Arc<C>,
+    task_id: String,
+    _phantom: PhantomData<fn(I) -> O>,
+}
+
+impl<F, I, O, Fut, C> CoreTask for FnTaskWrapper<F, I, O, C>
+where
+    F: Fn(I) -> Fut + Send + Sync + 'static,
+    I: Send + 'static,
+    O: Send + 'static,
+    Fut: Future<Output = Result<O, BoxError>> + Send + 'static,
+    C: Codec + sealed::DecodeValue<I> + sealed::EncodeValue<O>,
+{
+    type Input = Bytes;
+    type Output = Bytes;
+    type Future = BytesFuture;
+
+    fn run(&self, input: Bytes) -> Self::Future {
+        let func = Arc::clone(&self.func);
+        let codec = Arc::clone(&self.codec);
+        let task_id = self.task_id.clone();
+        BytesFuture::new(async move {
+            let decoded_input = codec.decode::<I>(input).map_err(|e| -> BoxError {
+                Box::new(CodecError::DecodeFailed {
+                    task_id: crate::TaskId::from(task_id.as_str()),
+                    expected_type: std::any::type_name::<I>(),
+                    source: e,
+                })
+            })?;
+            let output = func(decoded_input).await?;
+            codec.encode(&output).map_err(|e| -> BoxError {
+                Box::new(CodecError::EncodeFailed {
+                    task_id: crate::TaskId::from(task_id.as_str()),
+                    source: e,
+                })
+            })
+        })
+    }
+}
+
+/// Wrapper for loop body closure-based tasks (two-step encoding).
+struct LoopFnTaskWrapper<F, I, O, C> {
+    func: Arc<F>,
+    codec: Arc<C>,
+    task_id: String,
+    _phantom: PhantomData<fn(I) -> O>,
+}
+
+impl<F, I, O, Fut, C> CoreTask for LoopFnTaskWrapper<F, I, O, C>
+where
+    F: Fn(I) -> Fut + Send + Sync + 'static,
+    I: Send + 'static,
+    O: Send + 'static,
+    Fut: Future<Output = Result<LoopResult<O>, BoxError>> + Send + 'static,
+    C: Codec + sealed::DecodeValue<I> + sealed::EncodeValue<O>,
+{
+    type Input = Bytes;
+    type Output = Bytes;
+    type Future = BytesFuture;
+
+    fn run(&self, input: Bytes) -> Self::Future {
+        let func = Arc::clone(&self.func);
+        let codec = Arc::clone(&self.codec);
+        let task_id = self.task_id.clone();
+        BytesFuture::new(async move {
+            let decoded_input = codec.decode::<I>(input).map_err(|e| -> BoxError {
+                Box::new(CodecError::DecodeFailed {
+                    task_id: crate::TaskId::from(task_id.as_str()),
+                    expected_type: std::any::type_name::<I>(),
+                    source: e,
+                })
+            })?;
+            let loop_result = func(decoded_input).await?;
+            let (decision, inner) = loop_result.into_decision();
+            let inner_bytes = codec.encode(&inner).map_err(|e| -> BoxError {
+                Box::new(CodecError::EncodeFailed {
+                    task_id: crate::TaskId::from(task_id.as_str()),
+                    source: e,
+                })
+            })?;
+            Ok(crate::codec::encode_loop_envelope(decision, &inner_bytes))
+        })
+    }
+}
+
+/// Wrapper that converts a typed `CoreTask` into an untyped one operating on `Bytes`.
+struct TaskWrapper<T, C> {
+    task: Arc<T>,
+    codec: Arc<C>,
+    task_id: String,
+}
+
+impl<T, C> CoreTask for TaskWrapper<T, C>
+where
+    T: CoreTask + Send + Sync + 'static,
+    T::Input: Send + 'static,
+    T::Output: Send + 'static,
+    T::Future: Send + 'static,
+    C: Codec + sealed::DecodeValue<T::Input> + sealed::EncodeValue<T::Output>,
+{
+    type Input = Bytes;
+    type Output = Bytes;
+    type Future = BytesFuture;
+
+    fn run(&self, input: Bytes) -> Self::Future {
+        let task = Arc::clone(&self.task);
+        let codec = Arc::clone(&self.codec);
+        let task_id = self.task_id.clone();
+        BytesFuture::new(async move {
+            let decoded_input = codec.decode::<T::Input>(input).map_err(|e| -> BoxError {
+                Box::new(CodecError::DecodeFailed {
+                    task_id: crate::TaskId::from(task_id.as_str()),
+                    expected_type: std::any::type_name::<T::Input>(),
+                    source: e,
+                })
+            })?;
+            let output = task.run(decoded_input).await?;
+            codec.encode(&output).map_err(|e| -> BoxError {
+                Box::new(CodecError::EncodeFailed {
+                    task_id: crate::TaskId::from(task_id.as_str()),
+                    source: e,
+                })
+            })
+        })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::stable_sort_primitive)]
+mod tests {
+    use super::*;
+    use crate::codec::{Decoder, Encoder};
+
+    struct DummyCodec;
+    impl Encoder for DummyCodec {}
+    impl Decoder for DummyCodec {}
+    impl sealed::EncodeValue<u32> for DummyCodec {
+        fn encode_value(&self, _: &u32) -> Result<Bytes, BoxError> {
+            Ok(Bytes::from_static(b"encoded"))
+        }
+    }
+    impl sealed::DecodeValue<u32> for DummyCodec {
+        fn decode_value(&self, _: Bytes) -> Result<u32, BoxError> {
+            Ok(42)
+        }
+    }
+
+    #[test]
+    fn test_registry_register() {
+        let mut registry = TaskRegistry::new();
+        let codec = Arc::new(DummyCodec);
+
+        registry.register_fn("double", codec, |input: u32| async move { Ok(input * 2) });
+
+        assert!(registry.contains("double"));
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn test_registry_get() {
+        let mut registry = TaskRegistry::new();
+        let codec = Arc::new(DummyCodec);
+
+        registry.register_fn("double", codec, |input: u32| async move { Ok(input * 2) });
+
+        let task = registry.get("double");
+        assert!(task.is_some());
+
+        let missing = registry.get("nonexistent");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_registry_task_ids() {
+        let mut registry = TaskRegistry::new();
+        let codec = Arc::new(DummyCodec);
+
+        registry.register_fn("task_a", codec.clone(), |i: u32| async move { Ok(i) });
+        registry.register_fn("task_b", codec.clone(), |i: u32| async move { Ok(i) });
+        registry.register_fn("task_c", codec, |i: u32| async move { Ok(i) });
+
+        let mut ids: Vec<_> = registry.task_ids().collect();
+        ids.sort();
+        assert_eq!(ids, vec!["task_a", "task_b", "task_c"]);
+    }
+}
