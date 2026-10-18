@@ -2,7 +2,9 @@
 """Validate one committed Glirulus cohort; never publish or alter registry state."""
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -10,6 +12,9 @@ import subprocess
 import sys
 import tarfile
 import tomllib
+import zlib
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 VERSION = "1.0.0-glirulus.1"
@@ -91,6 +96,7 @@ def write_json(path, data, immutable=False):
         except FileExistsError:
             require(path.read_bytes() == content, "Reviewed package bytes changed for this release revision")
     else:
+        require(not re.fullmatch(r"cohort-[0-9a-f]{40}\.json", path.name), "A summary must not overwrite an immutable cohort witness")
         path.write_bytes(content)
 
 
@@ -209,22 +215,37 @@ def source(revision):
     return revision, packages
 
 
-def package_cohort(revision, package_dir):
+def package_cohort(revision, package_dir, *, establish):
     revision, sources = source(revision)
+    witness = ROOT / f"target/release-cohort/cohort-{revision}.json"
+    require(not witness.is_symlink(), "Pinned cohort witness must not be a symlink")
+    witness = target_path(witness)
+    pinned = None
+    if not establish:
+        require(witness.is_file() and not witness.is_symlink(), "Prepare and pin the reviewed package cohort before registry validation")
+        pinned = witness.read_bytes()
     package_dir = Path(package_dir).resolve()
     cohort = {"release_commit": revision, "version": VERSION, "registry_verified": False, "packages": []}
     generated = {"Cargo.toml", "Cargo.toml.orig", ".cargo_vcs_info.json", "Cargo.lock"}
     for name, files in sources.items():
         archive = package_dir / f"{name}-{VERSION}.crate"
         require(archive.is_file() and not archive.is_symlink(), f"Missing package archive: {name}")
+        with archive.open("rb") as handle:
+            archive_data = handle.read(32 * 1024 * 1024 + 1)
+        require(len(archive_data) <= 32 * 1024 * 1024, f"Oversized package archive: {name}")
+        # Bound the whole tar stream, including PAX headers parsed before members.
+        with gzip.GzipFile(fileobj=io.BytesIO(archive_data)) as compressed:
+            tar_data = compressed.read(64 * 1024 * 1024 + 1)
+        require(len(tar_data) <= 64 * 1024 * 1024, f"Oversized uncompressed package archive: {name}")
         packed = {}
-        with tarfile.open(archive, "r:gz") as tar:
-            for member in tar:
+        with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r:") as tar:
+            for entry_count, member in enumerate(tar, 1):
+                require(entry_count <= 4096, f"Too many package archive entries: {name}")
                 path = PurePosixPath(member.name)
                 require(path.parts and not path.is_absolute() and ".." not in path.parts and path.parts[0] == f"{name}-{VERSION}", f"Unsafe archive path: {name}")
                 if member.isdir():
                     continue
-                require(member.isfile() and member.size <= 16 * 1024 * 1024, f"Unexpected archive entry: {name}")
+                require(member.isfile() and 0 <= member.size <= 16 * 1024 * 1024, f"Unexpected archive entry: {name}")
                 relative = str(PurePosixPath(*path.parts[1:]))
                 require(relative not in packed, f"Duplicate archive entry: {name}")
                 packed[relative] = tar.extractfile(member).read()
@@ -254,30 +275,119 @@ def package_cohort(revision, package_dir):
         for path in files:
             if path.startswith(("src/", "tests/", "examples/", "migrations/")) or path in {"README.md", "LICENSE", "NOTICE"}:
                 require(packed.get(path) == files[path], f"Committed package input omitted: {name}/{path}")
-        data = archive.read_bytes()
-        cohort["packages"].append({"name": name, "version": VERSION, "archive_sha256": hashlib.sha256(data).hexdigest(), "archive_bytes": len(data)})
-    witness = target_path(f"target/release-cohort/cohort-{revision}.json")
+        cohort["packages"].append({"name": name, "version": VERSION, "archive_sha256": hashlib.sha256(archive_data).hexdigest(), "archive_bytes": len(archive_data)})
     unchanged_checkpoint(revision)
-    # Never silently redefine the reviewed byte cohort for the same revision.
-    write_json(witness, cohort, immutable=True)
+    # Registry resumption requires the original witness and cannot create one.
+    if establish:
+        write_json(witness, cohort, immutable=True)
+    else:
+        require(witness.read_bytes() == pinned and json.loads(pinned) == cohort, "Local package bytes differ from the original pinned release cohort")
     return cohort
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+def public_get(url, *, missing=False, limit=2 * 1024 * 1024):
+    # Fixed public HTTPS endpoints only; no Cargo credentials enter this helper.
+    request = Request(url, headers={"User-Agent": f"glirulus-release-cohort ({REPOSITORY})"})
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=30) as response:
+            data = response.read(limit + 1)
+            require(len(data) <= limit, "Registry response exceeds the bounded read limit")
+            return data
+    except HTTPError as error:
+        if missing and error.code == 404:
+            return None
+        raise InvalidCohort(f"Public registry request failed (HTTP {error.code}); no publication preflight established") from None
+    except (URLError, TimeoutError):
+        raise InvalidCohort("Public registry request unavailable; no publication preflight established") from None
+
+
+def public_json(path, *, missing=False):
+    data = public_get(f"https://crates.io/api/v1/{path}", missing=missing)
+    return None if data is None else json.loads(data)
+
+
+def registry_package(name, owner_id, pin, package_dir):
+    metadata = public_json(f"crates/{name}", missing=True)
+    result = {"name": name, "version": VERSION, "published": False}
+    if metadata is None:
+        result["name_status"] = "absent_public_record"
+        return result
+    require(metadata["crate"]["id"] == name, f"Registry name collision: {name}")
+    # Individual owners are deliberate: team membership is not inferred publicly.
+    owners = public_json(f"crates/{name}/owner_user")["users"]
+    require(any(owner.get("kind") == "user" and owner.get("id") == owner_id for owner in owners), f"Intended account is not a public individual owner of {name}")
+    result["name_status"] = "intended_account_is_public_owner"
+    selected = public_json(f"crates/{name}/{VERSION}", missing=True)
+    if selected is None:
+        return result
+    version = selected["version"]
+    require(version["crate"] == name and version["num"] == VERSION, f"Wrong registry version identity: {name}")
+    require(version.get("yanked") is False, f"Selected registry version is yanked: {name}")
+    require(version["checksum"] == pin["archive_sha256"], f"Published version checksum differs from reviewed cohort: {name}")
+    downloaded = public_get(f"https://static.crates.io/crates/{name}/{name}-{VERSION}.crate", limit=32 * 1024 * 1024)
+    require(len(downloaded) == pin["archive_bytes"] and hashlib.sha256(downloaded).hexdigest() == pin["archive_sha256"], f"Published archive differs from reviewed cohort: {name}")
+    local = Path(package_dir).resolve() / f"{name}-{VERSION}.crate"
+    require(downloaded == local.read_bytes(), f"Published archive and local reviewed bytes differ: {name}")
+    result.update(published=True, archive_sha256=pin["archive_sha256"])
+    return result
+
+
+def registry(revision, package_dir, owner, name=None):
+    require(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner), "Select a nonsecret individual crates.io username")
+    cohort = package_cohort(revision, package_dir, establish=False)
+    revision = cohort["release_commit"]
+    witness = target_path(f"target/release-cohort/cohort-{revision}.json")
+    original_witness = witness.read_bytes()
+    require(json.loads(original_witness) == cohort, "Pinned release cohort changed before registry validation")
+    account = public_json(f"users/{owner}")["user"]
+    require(isinstance(account.get("id"), int) and account.get("login", "").casefold() == owner.casefold(), "Public intended account identity does not match --owner")
+    names = [name] if name else list(ARCHIVES)
+    pins = {package["name"]: package for package in cohort["packages"]}
+    packages = [registry_package(selected, account["id"], pins[selected], package_dir) for selected in names]
+    for pin in cohort["packages"]:
+        archive = Path(package_dir).resolve() / f"{pin['name']}-{VERSION}.crate"
+        with archive.open("rb") as handle:
+            data = handle.read(pin["archive_bytes"] + 1)
+        require(len(data) == pin["archive_bytes"] and hashlib.sha256(data).hexdigest() == pin["archive_sha256"], f"Local archive changed during registry validation: {pin['name']}")
+    unchanged_checkpoint(revision)
+    require(witness.read_bytes() == original_witness, "Pinned release cohort changed during registry validation")
+    # Public ownership is evidence about the name, never the active Cargo identity
+    # or token scopes. The publisher requires separate operator confirmation.
+    result = {"release_commit": revision, "version": VERSION, "owner": owner,
+              "owner_id": account["id"], "public_preflight_passed": True,
+              "authenticated_account_unproven": True, "packages": packages,
+              "complete": all(package["published"] for package in packages)}
+    if name:
+        result["published"] = packages[0]["published"]
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="mode", required=True)
-    for mode in ("source", "packages"):
+    for mode in ("source", "packages", "registry", "status"):
         command = sub.add_parser(mode)
         command.add_argument("--revision", required=True)
         command.add_argument("--output")
         if mode != "source":
             command.add_argument("--package-dir", required=True)
+        if mode in ("registry", "status"):
+            command.add_argument("--owner", required=True)
+        if mode == "status":
+            command.add_argument("--name", choices=list(ARCHIVES), required=True)
     args = parser.parse_args()
     if args.mode == "source":
         revision, _ = source(args.revision)
         result = {"release_commit": revision, "version": VERSION, "packages": list(ARCHIVES), "registry_verified": False}
+    elif args.mode == "packages":
+        result = package_cohort(args.revision, args.package_dir, establish=True)
     else:
-        result = package_cohort(args.revision, args.package_dir)
+        result = registry(args.revision, args.package_dir, args.owner, getattr(args, "name", None))
     default = f"target/release-cohort/{args.mode}.json"
     write_json(args.output or default, result)
     print(json.dumps(result, sort_keys=True))
@@ -289,7 +399,7 @@ if __name__ == "__main__":
     except InvalidCohort as error:
         print(f"release-cohort: {error}", file=sys.stderr)
         sys.exit(1)
-    except (OSError, ValueError, KeyError, tarfile.TarError, subprocess.TimeoutExpired):
+    except (OSError, EOFError, ValueError, KeyError, TypeError, AttributeError, zlib.error, tarfile.TarError, subprocess.TimeoutExpired):
         # Report bounded failures without dumping subprocess output or file data.
         print("release-cohort: validation unavailable or malformed input; no registry readiness is established", file=sys.stderr)
         sys.exit(1)

@@ -117,12 +117,32 @@ migrations. Its checksums are recorded outside the archives in ignored
 `target/release-cohort/` evidence and cannot silently change for the same
 reviewed revision.
 
-These commands do not publish packages, create tags or publish GitHub releases.
-Registry account/name access, dependency-order publication, downloaded archive
-comparison, an external registry consumer and versioned Docs.rs output remain
-release acceptance requirements. A partial package cohort is not a release;
-already published versions must remain immutable. Registry installation is not
-available until the complete cohort has passed that acceptance.
+Before publishing, establish that the existing secure Cargo credential belongs
+to the intended crates.io account and has permission to publish all five names.
+The public registry checks cannot prove credential identity or token scopes.
+After verifying that prerequisite, explicitly select publication:
+
+```sh
+scripts/release.sh publish --revision <reviewed-full-commit-sha> --owner <crates-io-login> --account-verified
+```
+
+`--account-verified` records the operator's confirmation; it performs no
+automated account verification. Never put a token in command arguments. The
+publisher checks all five names and any existing versions before writing, then
+publishes Core, Persistence, Macros, Runtime and PostgreSQL in that order. It
+repackages each missing version against the real registry and compares it with
+the pinned cohort before upload, then compares registry checksums and downloaded
+archives against those same original bytes. Resuming skips only versions whose
+bytes match; an unexpected owner,
+yanked version or different archive blocks publication. A source correction
+after partial publication requires a new coherent version cohort.
+
+No mode creates commits, tags or GitHub releases. An external registry consumer
+with reduced JSON and default macro profiles, versioned Docs.rs output for all
+five packages and the GitHub prerelease remain release acceptance requirements.
+The release tag must identify the reviewed package commit; a later documentation
+status update must leave it intact. A partial package cohort is not a release,
+and registry installation is not accepted until the complete cohort passes.
 
 ## Qualified source checkpoint
 
