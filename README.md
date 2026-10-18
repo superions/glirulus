@@ -6,8 +6,8 @@ It is maintained by **Daniel Scharf**, including generic engine fixes used by
 [Myoxus](https://github.com/superions/myoxus).
 
 **Status: renamed source fork; registry release pending.** The five packages use
-`1.0.0-glirulus.1`. Standalone qualification is complete; registry publication is a separate
-step. No package release is claimed by this source checkpoint.
+`1.0.0-glirulus.1`. Standalone qualification is complete; registry publication
+is a separate step. No package release is claimed by this source checkpoint.
 
 ## Packages and boundary
 
@@ -61,8 +61,8 @@ doctests once, the external macro API consuming test, feature compilation and
 the PostgreSQL integration target. `tests`, `features` and `postgres` also run
 those groups separately. Disabling defaults still selects JSON explicitly for
 Runtime, whose codec-free configuration is intentionally unsupported; separate
-package-specific Core/Tokio and Runtime/JSON checks prevent PostgreSQL test
-dependencies from masking the reduced profile.
+package-specific Core/Tokio, Runtime/JSON and Runtime/rkyv checks prevent
+PostgreSQL test dependencies from masking the reduced profile.
 
 PostgreSQL integration uses disposable Docker containers rather than an
 application database. It requires access to a local Docker daemon. The Linux
@@ -70,6 +70,33 @@ checker requires Bash, GNU timeout, setsid and flock, retains caller Cargo job
 limits, owns only this checkout's target directory, bounds each command and
 removes its labeled test containers and anonymous volumes after completion or
 interruption.
+
+## Release preparation
+
+The Linux release entry point additionally requires Python 3.11 or later. Review
+and commit all release inputs first, including the release scripts. Select that
+full commit SHA explicitly for normal Cargo packaging:
+
+```sh
+scripts/release.sh source
+scripts/release.sh package --revision <reviewed-full-commit-sha>
+```
+
+Both commands require a clean checkout and locked dependency resolution. They
+share the checker's exclusive target lock and command limits. Packaging uses
+Cargo's normal verification without dirty-tree or verification bypasses. The
+archive review checks all five exact package versions and sibling edges,
+committed source, generated VCS identity, attribution, README files and SQL
+migrations. Its checksums are recorded outside the archives in ignored
+`target/release-cohort/` evidence and cannot silently change for the same
+reviewed revision.
+
+These commands do not publish packages, create tags or publish GitHub releases.
+Registry account/name access, dependency-order publication, downloaded archive
+comparison, an external registry consumer and versioned Docs.rs output remain
+release acceptance requirements. A partial package cohort is not a release;
+already published versions must remain immutable. Registry installation is not
+available until the complete cohort has passed that acceptance.
 
 ## Qualified source checkpoint
 
