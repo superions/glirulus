@@ -22,9 +22,9 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use sayiir_core::codec::{self, Decoder};
-use sayiir_core::snapshot::WorkflowSnapshot;
-use sayiir_persistence::BackendError;
+use glirulus_core::codec::{self, Decoder};
+use glirulus_core::snapshot::WorkflowSnapshot;
+use glirulus_persistence::BackendError;
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, Row};
 
@@ -39,7 +39,7 @@ use crate::error::PgError;
 pub(crate) async fn fetch_task_outputs<'e, E>(
     executor: E,
     instance_id: &str,
-) -> Result<Vec<(sayiir_core::TaskId, Bytes)>, BackendError>
+) -> Result<Vec<(glirulus_core::TaskId, Bytes)>, BackendError>
 where
     E: sqlx::PgExecutor<'e>,
 {
@@ -58,22 +58,22 @@ where
     let mut outputs = Vec::with_capacity(rows.len());
     for row in rows {
         let task_id_bytes: &[u8] = row.get("task_id");
-        let task_id = sayiir_core::TaskId::from_slice(task_id_bytes).map_err(|_| {
-            // sayiir_workflow_tasks.task_id is BYTEA after migration 008
-            // and is always written as a 32-byte SHA-256 (`digest(...,
-            // 'sha256')` in the migration's USING clause, raw bytes
-            // from `TaskId::as_bytes()` in every save path). A
-            // wrong-sized value here means the column was written by
-            // something outside this codebase or the migration left a
-            // row in a half-converted state — silently dropping it
-            // hides a real schema-integrity bug and surfaces later as
-            // unexplained `TaskNotFound` errors in
-            // `build_join_input` / load_task_result. Fail loudly.
-            BackendError::Backend(format!(
-                "sayiir_workflow_tasks.task_id for instance {instance_id} is {} bytes (expected 32)",
-                task_id_bytes.len()
-            ))
-        })?;
+        let task_id = glirulus_core::TaskId::from_slice(task_id_bytes).map_err(|_| {
+      // sayiir_workflow_tasks.task_id is BYTEA after migration 008
+      // and is always written as a 32-byte SHA-256 (`digest(...,
+      // 'sha256')` in the migration's USING clause, raw bytes
+      // from `TaskId::as_bytes()` in every save path). A
+      // wrong-sized value here means the column was written by
+      // something outside this codebase or the migration left a
+      // row in a half-converted state — silently dropping it
+      // hides a real schema-integrity bug and surfaces later as
+      // unexplained `TaskNotFound` errors in
+      // `build_join_input` / load_task_result. Fail loudly.
+      BackendError::Backend(format!(
+        "sayiir_workflow_tasks.task_id for instance {instance_id} is {} bytes (expected 32)",
+        task_id_bytes.len()
+      ))
+    })?;
         let output: Vec<u8> = row.get("output");
         outputs.push((task_id, Bytes::from(output)));
     }
@@ -86,7 +86,7 @@ where
 pub(crate) async fn fetch_task_outputs_batched<'e, E>(
     executor: E,
     instance_ids: &[&str],
-) -> Result<HashMap<String, Vec<(sayiir_core::TaskId, Bytes)>>, BackendError>
+) -> Result<HashMap<String, Vec<(glirulus_core::TaskId, Bytes)>>, BackendError>
 where
     E: sqlx::PgExecutor<'e>,
 {
@@ -102,7 +102,7 @@ where
     .await
     .map_err(PgError)?;
 
-    let mut grouped: HashMap<String, Vec<(sayiir_core::TaskId, Bytes)>> = HashMap::new();
+    let mut grouped: HashMap<String, Vec<(glirulus_core::TaskId, Bytes)>> = HashMap::new();
     for row in rows {
         let instance_id: String = row.get("instance_id");
         let task_id_bytes: &[u8] = row.get("task_id");
@@ -111,12 +111,12 @@ where
         // corruption; surface it as a backend error rather than
         // silently dropping the output and producing TaskNotFound in
         // build_join_input / load_task_result downstream.
-        let task_id = sayiir_core::TaskId::from_slice(task_id_bytes).map_err(|_| {
-            BackendError::Backend(format!(
-                "sayiir_workflow_tasks.task_id for instance {instance_id} is {} bytes (expected 32)",
-                task_id_bytes.len()
-            ))
-        })?;
+        let task_id = glirulus_core::TaskId::from_slice(task_id_bytes).map_err(|_| {
+      BackendError::Backend(format!(
+        "sayiir_workflow_tasks.task_id for instance {instance_id} is {} bytes (expected 32)",
+        task_id_bytes.len()
+      ))
+    })?;
         let output: Vec<u8> = row.get("output");
         grouped
             .entry(instance_id)
@@ -271,12 +271,12 @@ where
             // value here is schema corruption; surface it rather than
             // silently dropping the row and producing TaskNotFound
             // downstream in build_join_input / load_task_result.
-            let task_id = sayiir_core::TaskId::from_slice(&tid_bytes).map_err(|_| {
-                BackendError::Backend(format!(
-                    "sayiir_workflow_tasks.task_id for instance {instance_id} is {} bytes (expected 32)",
-                    tid_bytes.len()
-                ))
-            })?;
+            let task_id = glirulus_core::TaskId::from_slice(&tid_bytes).map_err(|_| {
+        BackendError::Backend(format!(
+          "sayiir_workflow_tasks.task_id for instance {instance_id} is {} bytes (expected 32)",
+          tid_bytes.len()
+        ))
+      })?;
             outputs.push((task_id, Bytes::from(output)));
         }
         snapshot.hydrate_task_outputs(outputs);

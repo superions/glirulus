@@ -1,0 +1,17 @@
+Glirulus macros
+
+Derived from sayiir-macros 1.0.0, licensed under the MIT license.
+Original project: https://github.com/sayiir/sayiir
+Original archive: https://static.crates.io/crates/sayiir-macros/sayiir-macros-1.0.0.crate
+Original archive SHA-256: f0a8982ba58b85f72e3e5f1c1d9da1ff23bcd7ee37106dd11c5fa95357d2ade8
+Source commit recorded by the archive: 7e6318225398ad7a418efb866156d2cc327ee43f
+The archive checksum identifies the imported source bytes.
+
+Copyright (c) 2026 Sayiir
+Glirulus modifications: Copyright (c) 2026 Daniel Scharf
+Glirulus source: https://github.com/superions/glirulus
+
+The original MIT grant and Glirulus modification attribution are in LICENSE.
+Original archive manifests and VCS metadata remain available in the imported
+baseline commit and original archives. Cargo generates this fork's current
+manifest and VCS metadata when packaging; upstream metadata is not release identity.

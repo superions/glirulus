@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```
-/// use sayiir_core::priority::Priority;
+/// use glirulus_core::priority::Priority;
 ///
 /// assert_eq!(Priority::default(), Priority::Normal);
 /// assert_eq!(Priority::Critical.as_u8(), 1);

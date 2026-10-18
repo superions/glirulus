@@ -1,0 +1,74 @@
+Glirulus postgres — source provenance and modifications
+
+Original package: sayiir-postgres 1.0.0
+Upstream: https://github.com/sayiir/sayiir
+Recorded source commit: 7e6318225398ad7a418efb866156d2cc327ee43f
+Archive: https://static.crates.io/crates/sayiir-postgres/sayiir-postgres-1.0.0.crate
+Archive SHA-256: 42bb11cb0ed558787c59517d12819c1213261ed1b7bd498ec358868be53f3633
+The original PostgreSQL archive records dirty=true; archive bytes are authoritative.
+
+License: MIT; Copyright (c) 2026 Sayiir.
+The complete original grant is retained in LICENSE.
+Glirulus modifications: Copyright (c) 2026 Daniel Scharf, under MIT.
+
+Generic source handoff: Myoxus revision
+fd7353183f4f1a566394c42bfe0bbef0b942a350, from
+server/crates/infrastructure/src/workflow_runtime/extensions/sayiir-postgres/.
+The complete source tree is retained with Rust crate identity changes only.
+
+Generic local modifications (Myoxus contributors, 2026):
+
+- PostgreSQL: attach an existing pool without running library migrations;
+  filter registered definition hashes before the polling limit; admit a
+  snapshot without rewinding a concurrent admission; participate in a caller's
+  transaction for snapshot creation/restart and signal admission. Snapshot
+  sidecar updates follow successful snapshot admission. Correlated events retain
+  their consumed identity and advance the snapshot in the same transaction.
+  A caller-supplied native wait arbiter runs before snapshot locks, using that
+  transaction for absolute deadlines and already-committed acceptance. Existing
+  pooled polling advances due/buffered waits using the current signal projection.
+- Runtime: register definitions in a live shared index for the existing
+  PooledWorker/external executor; expose worker completion and bounded shutdown
+  with task reaping; respect zero retries and persist terminal exhausted
+  external-task failures instead of leaving them executable. Polling and hints
+  also admit checkpointed current tasks for claimed continuation, using retained
+  output and existing completion helpers without calling the task executor again.
+  Signal consumers preserve a backend's already-advanced checkpoint. External
+  JSON branch selection retains its full input and technical routingKey; only
+  the selected declared child chain participates in continuation/completion.
+  An explicit routingEmpty projection completes an authored empty branch without
+  dispatching a synthetic task; it cannot suppress a declared nonempty child.
+  External dispatch resolves declared Branch selector names omitted by the
+  upstream task index; native task dispatch keeps its indexed contract.
+  Persisted advancement into another signal/delay head parks that control under
+  the normal dispatch claim, sharing existing wait arbitration and event draining
+  rather than invoking a nonexistent external task body.
+
+Glirulus additionally changes package/library identities and sibling dependency
+edges, preserves inherited tests, and carries standalone workspace packaging.
+The upstream PostgreSQL integration test is verified against the recorded source
+commit. Its omitted development dependencies are restored; all three disposable
+container construction sites share an optional standalone-run cleanup label.
+
+The original SQL object names and notification channel remain unchanged.
+Application business types, authorization, native receipts, native wait
+arbitration and application migration ledgers remain outside these libraries.
+
+Additional Glirulus standalone-schema correction: migration
+010_correlated_event_wait_projection.sql supplies nullable event_id,
+accepted_at and consumed_at event columns, their partial unique admission key,
+and the snapshot signal_name polling projection required by the generic source.
+It is independently authored from the generic library SQL contracts under MIT,
+Copyright (c) 2026 Daniel Scharf. The original nine upstream migrations remain
+byte-for-byte unchanged. No application migration ledger, business constraints,
+readiness marker or native tables are included; caller-managed pool attachment
+continues to perform no DDL.
+
+Additional Glirulus signal-store qualification corrections preserve inherited
+FIFO consumption of uncorrelated buffered events when no matching wait or native
+arbitrator applies. Correlated events retain their identities and native waits
+retain arbitration before snapshot locks. Terminal signal completion flushes
+its task output on the same connection before terminal state drops the task
+map, preserving existing completion timestamps and avoiding unchanged-output
+rewrites. The output, terminal snapshot and event consumption remain atomic;
+no extra snapshot history checkpoint or independent transaction is introduced.

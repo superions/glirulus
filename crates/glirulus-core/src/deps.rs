@@ -13,7 +13,7 @@
 //! # Quick Example
 //!
 //! ```
-//! use sayiir_core::deps::Deps;
+//! use glirulus_core::deps::Deps;
 //! use std::sync::Arc;
 //!
 //! #[derive(Clone)]

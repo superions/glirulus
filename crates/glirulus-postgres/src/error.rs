@@ -1,6 +1,6 @@
 //! Error mapping from sqlx to `BackendError`.
 
-use sayiir_persistence::BackendError;
+use glirulus_persistence::BackendError;
 
 /// Map a [`sqlx::Error`] into a [`BackendError`].
 impl From<sqlx::Error> for PgError {

@@ -8,7 +8,7 @@
 //! - [`Codec`] — blanket `Encoder + Decoder`
 //! - [`EnvelopeCodec`] — object-safe helpers for branch routing envelopes
 //!
-//! Concrete implementations live in `sayiir-runtime` (`JsonCodec`, `RkyvCodec`).
+//! Concrete implementations live in `glirulus-runtime` (`JsonCodec`, `RkyvCodec`).
 
 use crate::error::BoxError;
 use bytes::Bytes;
@@ -165,7 +165,7 @@ impl<C> Decoder for std::sync::Arc<C> where C: Decoder {}
 /// - Constructing discriminated `{"branch": key, "result": value}` envelopes
 /// - Serializing named fork/join results
 ///
-/// Concrete implementations live in `sayiir-runtime` (`JsonCodec`, `RkyvCodec`).
+/// Concrete implementations live in `glirulus-runtime` (`JsonCodec`, `RkyvCodec`).
 pub trait EnvelopeCodec: Send + Sync {
     /// Decode a routing key (String) from bytes produced by a branch key function.
     ///

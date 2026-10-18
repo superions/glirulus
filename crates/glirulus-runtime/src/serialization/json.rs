@@ -1,7 +1,7 @@
 use bytes::Bytes;
-use sayiir_core::codec::{CodecIdentity, Decoder, Encoder, sealed};
-use sayiir_core::error::BoxError;
-use sayiir_core::snapshot_format::CodecId;
+use glirulus_core::codec::{CodecIdentity, Decoder, Encoder, sealed};
+use glirulus_core::error::BoxError;
+use glirulus_core::snapshot_format::CodecId;
 use serde::{Deserialize, Serialize};
 
 /// A codec that can serialize and deserialize values using `serde_json`.
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 /// # Example
 ///
 /// ```rust
-/// use sayiir_runtime::serialization::JsonCodec;
-/// use sayiir_core::codec::*;
+/// use glirulus_runtime::serialization::JsonCodec;
+/// use glirulus_core::codec::*;
 ///
 /// let codec = JsonCodec;
 /// let value = 42;
@@ -51,7 +51,7 @@ where
     }
 }
 
-impl sayiir_core::codec::EnvelopeCodec for JsonCodec {
+impl glirulus_core::codec::EnvelopeCodec for JsonCodec {
     fn decode_string(&self, bytes: &[u8]) -> Result<String, BoxError> {
         Ok(serde_json::from_slice(bytes)?)
     }
@@ -64,7 +64,7 @@ impl sayiir_core::codec::EnvelopeCodec for JsonCodec {
     }
 
     fn encode_named_results(&self, results: &[(String, Bytes)]) -> Result<Bytes, BoxError> {
-        let nbr = sayiir_core::branch_results::NamedBranchResults::new(results.to_vec());
+        let nbr = glirulus_core::branch_results::NamedBranchResults::new(results.to_vec());
         Ok(Bytes::from(serde_json::to_vec(&nbr)?))
     }
 }

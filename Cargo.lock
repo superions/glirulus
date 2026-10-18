@@ -937,6 +937,98 @@ dependencies = [
 ]
 
 [[package]]
+name = "glirulus-core"
+version = "1.0.0-glirulus.1"
+dependencies = [
+ "bytecheck",
+ "bytes",
+ "chrono",
+ "hex",
+ "proptest",
+ "rkyv",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strum",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "glirulus-macros"
+version = "1.0.0-glirulus.1"
+dependencies = [
+ "darling 0.23.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "trybuild",
+]
+
+[[package]]
+name = "glirulus-persistence"
+version = "1.0.0-glirulus.1"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "glirulus-core",
+ "nanoserde",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "glirulus-postgres"
+version = "1.0.0-glirulus.1"
+dependencies = [
+ "backon",
+ "bytes",
+ "chrono",
+ "flume 0.12.0",
+ "glirulus-core",
+ "glirulus-persistence",
+ "glirulus-runtime",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "testcontainers",
+ "testcontainers-modules",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "glirulus-runtime"
+version = "1.0.0-glirulus.1"
+dependencies = [
+ "backon",
+ "bytecheck",
+ "bytes",
+ "chrono",
+ "futures",
+ "glirulus-core",
+ "glirulus-macros",
+ "glirulus-persistence",
+ "hostname",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "proptest",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2430,98 +2522,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "sayiir-core"
-version = "1.0.0"
-dependencies = [
- "bytecheck",
- "bytes",
- "chrono",
- "hex",
- "proptest",
- "rkyv",
- "rustc-hash",
- "serde",
- "serde_json",
- "sha2",
- "strum",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "sayiir-macros"
-version = "1.0.0"
-dependencies = [
- "darling 0.23.0",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "trybuild",
-]
-
-[[package]]
-name = "sayiir-persistence"
-version = "1.0.0"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "chrono",
- "nanoserde",
- "sayiir-core",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "sayiir-postgres"
-version = "1.0.0"
-dependencies = [
- "backon",
- "bytes",
- "chrono",
- "flume 0.12.0",
- "sayiir-core",
- "sayiir-persistence",
- "sayiir-runtime",
- "serde_json",
- "sha2",
- "sqlx",
- "testcontainers",
- "testcontainers-modules",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "sayiir-runtime"
-version = "1.0.0"
-dependencies = [
- "backon",
- "bytecheck",
- "bytes",
- "chrono",
- "futures",
- "hostname",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "proptest",
- "rkyv",
- "sayiir-core",
- "sayiir-macros",
- "sayiir-persistence",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "schannel"

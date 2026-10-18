@@ -10,10 +10,10 @@
 //! This is the standard pattern in workflow engines.
 //!
 //! ```rust
-//! # use sayiir_core::codec::{Encoder, Decoder, sealed};
+//! # use glirulus_core::codec::{Encoder, Decoder, sealed};
 //! # use bytes::Bytes;
-//! use sayiir_core::prelude::*;
-//! use sayiir_core::workflow::SerializableContinuation;
+//! use glirulus_core::prelude::*;
+//! use glirulus_core::workflow::SerializableContinuation;
 //! use std::sync::Arc;
 //! # struct MyCodec;
 //! # impl Encoder for MyCodec {}
@@ -126,7 +126,7 @@ impl TaskRegistry {
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;
@@ -138,7 +138,7 @@ impl TaskRegistry {
     /// # impl<T> sealed::DecodeValue<T> for MyCodec {
     /// #     fn decode_value(&self, _: Bytes) -> Result<T, BoxError> { Err("dummy".into()) }
     /// # }
-    /// use sayiir_core::prelude::*;
+    /// use glirulus_core::prelude::*;
     /// use std::pin::Pin;
     /// use std::future::Future;
     ///
@@ -208,8 +208,8 @@ impl TaskRegistry {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use sayiir_core::deps::Deps;
-    /// use sayiir_core::registry::TaskRegistry;
+    /// use glirulus_core::deps::Deps;
+    /// use glirulus_core::registry::TaskRegistry;
     ///
     /// let mut registry = TaskRegistry::new();
     /// registry.register_from_deps::<ChargeTask, _>(codec.clone(), &deps)?;
@@ -275,8 +275,8 @@ impl TaskRegistry {
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::prelude::*;
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::prelude::*;
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;
@@ -534,8 +534,8 @@ impl TaskRegistry {
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::prelude::*;
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::prelude::*;
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;

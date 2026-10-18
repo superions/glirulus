@@ -1,13 +1,13 @@
 //! Workflow lifecycle: prepare, resume, and finalize.
 
 use bytes::Bytes;
-use sayiir_core::error::WorkflowError;
-use sayiir_core::snapshot::{
+use glirulus_core::error::WorkflowError;
+use glirulus_core::snapshot::{
     ExecutionPosition, SignalKind, TaskHint, WorkflowSnapshot, WorkflowSnapshotState,
 };
-use sayiir_core::workflow::{ConflictPolicy, WorkflowStatus};
-pub use sayiir_persistence::PrepareRunOutcome;
-use sayiir_persistence::{SignalStore, SnapshotStore};
+use glirulus_core::workflow::{ConflictPolicy, WorkflowStatus};
+pub use glirulus_persistence::PrepareRunOutcome;
+use glirulus_persistence::{SignalStore, SnapshotStore};
 
 use super::helpers::ResumeParkedPosition;
 use crate::error::RuntimeError;
@@ -32,14 +32,14 @@ use crate::error::RuntimeError;
 /// I/O errors.
 pub async fn check_existing_instance<B>(
     instance_id: &str,
-    definition_hash: &sayiir_core::DefinitionHash,
+    definition_hash: &glirulus_core::DefinitionHash,
     backend: &B,
     conflict_policy: ConflictPolicy,
 ) -> Result<Option<(WorkflowStatus, Option<Bytes>)>, RuntimeError>
 where
     B: SnapshotStore,
 {
-    sayiir_core::validate_instance_id(instance_id)?;
+    glirulus_core::validate_instance_id(instance_id)?;
     if matches!(conflict_policy, ConflictPolicy::TerminateExisting) {
         return Ok(None);
     }
@@ -64,7 +64,7 @@ where
                 ConflictPolicy::TerminateExisting => unreachable!(),
             }
         }
-        Err(sayiir_persistence::BackendError::NotFound(_)) => Ok(None),
+        Err(glirulus_persistence::BackendError::NotFound(_)) => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
@@ -74,7 +74,7 @@ where
 /// Requires the caller to have already called [`check_existing_instance`] —
 /// this function only handles the cleanup half of `TerminateExisting` and
 /// the snapshot write. Callers that need the full check-and-write in one
-/// shot should use [`sayiir_persistence::prepare_run`] directly (see the
+/// shot should use [`glirulus_persistence::prepare_run`] directly (see the
 /// `test_prepare_run_creates_snapshot` test for the standalone shape).
 ///
 /// # Errors
@@ -87,7 +87,7 @@ where
 )]
 pub async fn prepare_run<B>(
     instance_id: &str,
-    definition_hash: sayiir_core::DefinitionHash,
+    definition_hash: glirulus_core::DefinitionHash,
     input_bytes: Bytes,
     first_task: TaskHint,
     backend: &B,
@@ -96,7 +96,7 @@ pub async fn prepare_run<B>(
 where
     B: SnapshotStore + SignalStore,
 {
-    sayiir_core::validate_instance_id(instance_id)?;
+    glirulus_core::validate_instance_id(instance_id)?;
     if matches!(conflict_policy, ConflictPolicy::TerminateExisting) {
         // Best-effort cleanup — if nothing exists the deletes are no-ops.
         match backend.load_snapshot(instance_id).await {
@@ -108,7 +108,7 @@ where
                     .await?;
                 backend.clear_signal(instance_id, SignalKind::Pause).await?;
             }
-            Err(sayiir_persistence::BackendError::NotFound(_)) => {}
+            Err(glirulus_persistence::BackendError::NotFound(_)) => {}
             Err(e) => return Err(e.into()),
         }
     }
@@ -143,13 +143,13 @@ where
 )]
 pub async fn prepare_resume<B>(
     instance_id: &str,
-    definition_hash: &sayiir_core::DefinitionHash,
+    definition_hash: &glirulus_core::DefinitionHash,
     backend: &B,
 ) -> Result<ResumeOutcome, RuntimeError>
 where
     B: SignalStore,
 {
-    sayiir_core::validate_instance_id(instance_id)?;
+    glirulus_core::validate_instance_id(instance_id)?;
     tracing::debug!("preparing workflow resume");
     let mut snapshot = backend.load_snapshot(instance_id).await?;
 
@@ -275,7 +275,7 @@ where
                     position: ExecutionPosition::AtFork { fork_id, .. },
                     ..
                 } => *fork_id,
-                _ => sayiir_core::TaskId::default(),
+                _ => glirulus_core::TaskId::default(),
             };
             tracing::info!(
                 instance_id = %snapshot.instance_id,

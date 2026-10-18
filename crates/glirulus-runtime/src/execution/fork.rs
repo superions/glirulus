@@ -6,11 +6,11 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use sayiir_core::codec::EnvelopeCodec;
-use sayiir_core::error::{BoxError, WorkflowError};
-use sayiir_core::snapshot::{ExecutionPosition, TaskResult, WorkflowSnapshot};
-use sayiir_core::workflow::WorkflowContinuation;
-use sayiir_persistence::{SignalStore, SnapshotStore};
+use glirulus_core::codec::EnvelopeCodec;
+use glirulus_core::error::{BoxError, WorkflowError};
+use glirulus_core::snapshot::{ExecutionPosition, TaskResult, WorkflowSnapshot};
+use glirulus_core::workflow::WorkflowContinuation;
+use glirulus_persistence::{SignalStore, SnapshotStore};
 
 use crate::error::RuntimeError;
 
@@ -37,7 +37,7 @@ pub(crate) fn build_completed_branches(
             (
                 id.clone(),
                 TaskResult {
-                    task_id: sayiir_core::TaskId::from(id),
+                    task_id: glirulus_core::TaskId::from(id),
                     output: output.clone(),
                 },
             )
@@ -53,7 +53,7 @@ pub(crate) fn collect_cached_branches(
     let mut results = Vec::with_capacity(branches.len());
     for branch in branches {
         let branch_name = branch.id().to_string();
-        let branch_hash = sayiir_core::TaskId::from(branch_name.as_str());
+        let branch_hash = glirulus_core::TaskId::from(branch_name.as_str());
         if let Some(result) = snapshot.get_task_result(&branch_hash) {
             results.push((branch_name, result.output.clone()));
         } else {
@@ -81,7 +81,7 @@ pub(crate) async fn park_at_fork<B: SnapshotStore>(
     backend: &B,
 ) -> RuntimeError {
     for (branch_id, output) in branch_results {
-        let branch_tid = sayiir_core::TaskId::from(branch_id.as_str());
+        let branch_tid = glirulus_core::TaskId::from(branch_id.as_str());
         if let Err(e) = backend
             .save_task_result(&snapshot.instance_id, &branch_tid, output.clone())
             .await
@@ -95,7 +95,7 @@ pub(crate) async fn park_at_fork<B: SnapshotStore>(
         Err(e) => return RuntimeError::from(e),
     };
 
-    let fork_id_tid = sayiir_core::TaskId::from(fork_id);
+    let fork_id_tid = glirulus_core::TaskId::from(fork_id);
     updated_snapshot.update_position(ExecutionPosition::AtFork {
         fork_id: fork_id_tid,
         completed_branches: build_completed_branches(branch_results),
@@ -120,12 +120,12 @@ pub(crate) async fn save_join_position<B: SnapshotStore>(
     backend: &B,
 ) -> Result<(), RuntimeError> {
     for (branch_id, output) in branch_results {
-        snapshot.mark_task_completed(sayiir_core::TaskId::from(branch_id), output.clone());
+        snapshot.mark_task_completed(glirulus_core::TaskId::from(branch_id), output.clone());
     }
 
     if let Some(join_cont) = join {
         snapshot.update_position(ExecutionPosition::AtJoin {
-            join_id: sayiir_core::TaskId::from(join_cont.first_task_id()),
+            join_id: glirulus_core::TaskId::from(join_cont.first_task_id()),
             completed_branches: build_completed_branches(branch_results),
         });
     }
@@ -171,7 +171,7 @@ where
 
     for branch in branches {
         let branch_name = branch.id().to_string();
-        let branch_hash = sayiir_core::TaskId::from(branch_name.as_str());
+        let branch_hash = glirulus_core::TaskId::from(branch_name.as_str());
 
         if let Some(result) = snapshot.get_task_result(&branch_hash) {
             branch_results.push((branch_name, result.output.clone()));
@@ -380,13 +380,13 @@ where
                 Ok(ControlFlow::Continue(output))
             }
             WorkflowContinuation::Delay { id, duration, .. } => {
-                if let Some(result) = snapshot.get_task_result(&sayiir_core::TaskId::from(id)) {
+                if let Some(result) = snapshot.get_task_result(&glirulus_core::TaskId::from(id)) {
                     tracing::debug!(delay_id = %id, "delay already completed in branch, skipping");
                     Ok(ControlFlow::Continue(result.output.clone()))
                 } else {
                     let wake_at = compute_wake_at(duration)?;
                     Ok(ControlFlow::Break(StepOutcome::Park(ParkReason::Delay {
-                        delay_id: sayiir_core::TaskId::from(id),
+                        delay_id: glirulus_core::TaskId::from(id),
                         wake_at,
                         next_task: None,
                         passthrough: current_input.clone(),
@@ -399,14 +399,14 @@ where
                 timeout,
                 ..
             } => {
-                if let Some(result) = snapshot.get_task_result(&sayiir_core::TaskId::from(id)) {
+                if let Some(result) = snapshot.get_task_result(&glirulus_core::TaskId::from(id)) {
                     tracing::debug!(signal_id = %id, %signal_name, "signal already consumed in branch, skipping");
                     Ok(ControlFlow::Continue(result.output.clone()))
                 } else {
                     let wake_at = super::control_flow::compute_signal_timeout(timeout.as_ref());
                     Ok(ControlFlow::Break(StepOutcome::Park(
                         ParkReason::AwaitingSignal {
-                            signal_id: sayiir_core::TaskId::from(id),
+                            signal_id: glirulus_core::TaskId::from(id),
                             signal_name: signal_name.clone(),
                             timeout: wake_at,
                             next_task: None,
@@ -438,13 +438,15 @@ where
                 default,
                 ..
             } => {
-                if let Some(result) = snapshot.get_task_result(&sayiir_core::TaskId::from(id)) {
+                if let Some(result) = snapshot.get_task_result(&glirulus_core::TaskId::from(id)) {
                     Ok(ControlFlow::Continue(result.output.clone()))
                 } else {
-                    let key_bytes =
-                        execute_task(&sayiir_core::workflow::key_fn_id(id), current_input.clone())
-                            .await
-                            .map_err(RuntimeError::from)?;
+                    let key_bytes = execute_task(
+                        &glirulus_core::workflow::key_fn_id(id),
+                        current_input.clone(),
+                    )
+                    .await
+                    .map_err(RuntimeError::from)?;
                     let (key, chosen) = resolve_branch(
                         id,
                         &key_bytes,
@@ -470,7 +472,7 @@ where
                     backend
                         .save_task_result(
                             instance_id,
-                            &sayiir_core::TaskId::from(id),
+                            &glirulus_core::TaskId::from(id),
                             envelope_bytes.clone(),
                         )
                         .await?;
@@ -485,7 +487,7 @@ where
                 on_max,
                 ..
             } => {
-                if let Some(result) = snapshot.get_task_result(&sayiir_core::TaskId::from(id)) {
+                if let Some(result) = snapshot.get_task_result(&glirulus_core::TaskId::from(id)) {
                     Ok(ControlFlow::Continue(result.output.clone()))
                 } else {
                     let cfg = LoopConfig {
@@ -493,7 +495,7 @@ where
                         body,
                         max_iterations: *max_iterations,
                         on_max: *on_max,
-                        start_iteration: snapshot.loop_iteration(&sayiir_core::TaskId::from(id)),
+                        start_iteration: snapshot.loop_iteration(&glirulus_core::TaskId::from(id)),
                     };
                     let mut hooks = CheckpointingLoopHooks {
                         snapshot: &mut snapshot,
@@ -520,7 +522,7 @@ where
                 }
             }
             WorkflowContinuation::ChildWorkflow { id, child, .. } => {
-                if let Some(result) = snapshot.get_task_result(&sayiir_core::TaskId::from(id)) {
+                if let Some(result) = snapshot.get_task_result(&glirulus_core::TaskId::from(id)) {
                     Ok(ControlFlow::Continue(result.output.clone()))
                 } else {
                     let output = Box::pin(execute_branch_with_checkpointing(
@@ -533,7 +535,7 @@ where
                     ))
                     .await?;
 
-                    snapshot.mark_task_completed(sayiir_core::TaskId::from(id), output.clone());
+                    snapshot.mark_task_completed(glirulus_core::TaskId::from(id), output.clone());
                     backend.save_snapshot(&mut snapshot).await?;
 
                     Ok(ControlFlow::Continue(output))

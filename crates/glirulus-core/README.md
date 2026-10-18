@@ -1,59 +1,29 @@
-# sayiir-core
+# glirulus-core
 
-Core types and traits for the [Sayiir](https://github.com/sayiir/sayiir) durable workflow engine.
+Core types and traits for the [Glirulus](https://github.com/superions/glirulus)
+durable workflow engine, derived from Sayiir 1.0.0.
 
-## Overview
+This crate models workflows, task registries, codecs and execution snapshots.
+It does not provide persistence or execute workflows. `WorkflowBuilder` assembles
+continuation trees; `CoreTask` describes task inputs, outputs and metadata;
+`WorkflowSnapshot` retains execution position and completed task output.
 
-This crate defines the foundational abstractions that every other `sayiir-*` crate builds on. It is intentionally **runtime-agnostic** — no persistence, no execution strategy, just pure workflow modelling.
-
-## Key Types
-
-| Type / Trait | Purpose |
-|---|---|
-| `Workflow` / `SerializableWorkflow` | Continuation tree describing *what* to execute |
-| `WorkflowBuilder` | Fluent API for assembling sequential, forked, and joined pipelines |
-| `CoreTask` | Trait every task implements (input → output, with metadata) |
-| `Codec` | Pluggable serialization (JSON, rkyv, …) |
-| `WorkflowContext` | Per-execution context (codec, workflow ID, user metadata) |
-| `WorkflowSnapshot` | Checkpoint of in-flight state (completed tasks + outputs) |
-| `TaskRegistry` | Name → factory map for cross-process workflow deserialization |
-
-## Architecture
-
-```
-sayiir-core          ← this crate (types & traits only)
-  ↑
-sayiir-persistence   (SnapshotStore, SignalStore, TaskClaimStore)
-  ↑
-sayiir-runtime       (CheckpointingRunner, PooledWorker, execution loop)
-  ↑
-sayiir-macros        (#[task], workflow! — optional convenience)
+```toml
+[dependencies]
+glirulus-core = "=1.0.0-glirulus.1"
 ```
 
-## Quick Example
+The default `tokio` feature supplies task-local workflow context. Disable defaults
+for a runtime-independent model. Optional `rkyv` support adds archive traits;
+concrete JSON and rkyv codecs live in `glirulus-runtime`.
 
-```rust
-use sayiir_core::prelude::*;
-use std::sync::Arc;
+Use `glirulus-persistence` for storage traits, `glirulus-runtime` for execution,
+and `glirulus-macros` for `#[task]`, `workflow!` and `BranchKey`. Consumers of
+those macros declare Core directly because generated paths name `glirulus_core`.
 
-fn main() -> Result<(), WorkflowError> {
-    let ctx = WorkflowContext::new("order-pipeline", Arc::new(my_codec), Arc::new(()));
+The inherited snapshot magic, format versions and definition/task identities
+are preserved. Changing a Rust crate name does not migrate persisted data.
 
-    let wf = WorkflowBuilder::new(ctx)
-        .then("validate", |order: String| async move { Ok(order) })
-        .then("charge", |order: String| async move { Ok(42u64) })
-        .build()?;
-
-    Ok(())
-}
-```
-
-Most users will depend on `sayiir-runtime` (which re-exports this crate) rather than using `sayiir-core` directly.
-
-## Documentation
-
-Full API docs are available on [docs.rs](https://docs.rs/sayiir-core).
-
-## License
-
-MIT
+API documentation: [docs.rs/glirulus-core](https://docs.rs/glirulus-core).
+The original MIT grant and fork attribution are in [LICENSE](LICENSE);
+[NOTICE](NOTICE) identifies the source archive.

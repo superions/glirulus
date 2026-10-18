@@ -1,22 +1,10 @@
-# Based on the Cargo-normalized Sayiir 1.0.0 archive manifest.
-# Glirulus baseline changes only repair standalone workspace packaging.
-# The archived authoring manifest is retained in Cargo.toml.orig.
-#
-# ORIGINAL CARGO NORMALIZATION NOTICE:
-#
-# When uploading crates to the registry Cargo will automatically
-# "normalize" Cargo.toml files for maximal compatibility
-# with all versions of Cargo and also rewrite `path` dependencies
-# to registry (e.g., crates.io) dependencies.
-#
-# If you are reading this file be aware that the original Cargo.toml
-# will likely look very different (and much more reasonable).
-# See Cargo.toml.orig for the original contents.
+# Standalone Glirulus manifest, derived from the Sayiir 1.0.0 archive.
+# Source provenance and generic modifications are recorded in NOTICE.
 
 [package]
 edition = "2024"
-name = "sayiir-runtime"
-version = "1.0.0"
+name = "glirulus-runtime"
+version = "1.0.0-glirulus.1"
 authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
 build = false
 autolib = false
@@ -24,10 +12,11 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Execution runtime, checkpointing runner and distributed workers for Sayiir workflows"
+description = "Execution runtime, checkpointing runner and distributed workers for Glirulus workflows"
 homepage = "https://github.com/superions/glirulus"
-documentation = "https://docs.rs/sayiir-runtime"
+documentation = "https://docs.rs/glirulus-runtime"
 readme = "README.md"
+include = ["src/**", "tests/**", "README.md", "LICENSE", "NOTICE"]
 keywords = [
     "workflow",
     "orchestration",
@@ -57,7 +46,7 @@ default = [
     "macros",
 ]
 json = ["dep:serde_json"]
-macros = ["dep:sayiir-macros"]
+macros = ["dep:glirulus-macros"]
 otel = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
@@ -68,12 +57,17 @@ otel = [
 rkyv = [
     "dep:rkyv",
     "dep:bytecheck",
-    "sayiir-core/rkyv",
+    "glirulus-core/rkyv",
 ]
 
 [lib]
-name = "sayiir_runtime"
+name = "glirulus_runtime"
 path = "src/lib.rs"
+
+[[test]]
+name = "macros"
+path = "tests/macros.rs"
+required-features = ["json", "macros"]
 
 [dependencies.backon]
 version = "1"
@@ -126,19 +120,19 @@ features = [
 ]
 optional = true
 
-[dependencies.sayiir-core]
-version = "=1.0.0"
+[dependencies.glirulus-core]
+version = "=1.0.0-glirulus.1"
 path = "../glirulus-core"
 features = ["tokio"]
 default-features = false
 
-[dependencies.sayiir-macros]
-version = "=1.0.0"
+[dependencies.glirulus-macros]
+version = "=1.0.0-glirulus.1"
 path = "../glirulus-macros"
 optional = true
 
-[dependencies.sayiir-persistence]
-version = "=1.0.0"
+[dependencies.glirulus-persistence]
+version = "=1.0.0-glirulus.1"
 path = "../glirulus-persistence"
 
 [dependencies.serde]

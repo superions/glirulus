@@ -55,7 +55,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     });
 
     Ok(quote! {
-        impl ::sayiir_core::branch_key::BranchKey for #name {
+        impl ::glirulus_core::branch_key::BranchKey for #name {
             fn as_key(&self) -> &'static str {
                 match self {
                     #(#match_arms,)*

@@ -1,7 +1,7 @@
 //! Convenience re-exports for common usage.
 //!
 //! ```rust
-//! use sayiir_runtime::prelude::*;
+//! use glirulus_runtime::prelude::*;
 //! ```
 
 // Runtime types
@@ -17,20 +17,20 @@ pub use crate::serialization::JsonCodec;
 pub use crate::serialization::RkyvCodec;
 
 // Codec traits
-pub use sayiir_core::codec::{Decoder, Encoder, EnvelopeCodec};
+pub use glirulus_core::codec::{Decoder, Encoder, EnvelopeCodec};
 
-// Core workflow types (from sayiir-core)
-pub use sayiir_core::branch_key::BranchKey;
-pub use sayiir_core::branch_results::NamedBranchResults;
-pub use sayiir_core::context::WorkflowContext;
-pub use sayiir_core::deps::{Deps, DepsBuilder, DepsInjectable, MissingDep};
-pub use sayiir_core::error::BoxError;
-pub use sayiir_core::registry::TaskRegistry;
-pub use sayiir_core::workflow::{Workflow, WorkflowBuilder, WorkflowStatus};
+// Core workflow types (from glirulus-core)
+pub use glirulus_core::branch_key::BranchKey;
+pub use glirulus_core::branch_results::NamedBranchResults;
+pub use glirulus_core::context::WorkflowContext;
+pub use glirulus_core::deps::{Deps, DepsBuilder, DepsInjectable, MissingDep};
+pub use glirulus_core::error::BoxError;
+pub use glirulus_core::registry::TaskRegistry;
+pub use glirulus_core::workflow::{Workflow, WorkflowBuilder, WorkflowStatus};
 
-// Persistence (from sayiir-persistence)
-pub use sayiir_persistence::{InMemoryBackend, PersistentBackend};
+// Persistence (from glirulus-persistence)
+pub use glirulus_persistence::{InMemoryBackend, PersistentBackend};
 
-// Macros (from sayiir-macros)
+// Macros (from glirulus-macros)
 #[cfg(feature = "macros")]
-pub use sayiir_macros::{BranchKey, task, workflow};
+pub use glirulus_macros::{BranchKey, task, workflow};

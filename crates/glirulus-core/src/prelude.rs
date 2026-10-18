@@ -1,7 +1,7 @@
 //! Common imports for workflow authors.
 //!
 //! ```rust
-//! use sayiir_core::prelude::*;
+//! use glirulus_core::prelude::*;
 //! ```
 //!
 //! This re-exports the types needed to define and build workflows,

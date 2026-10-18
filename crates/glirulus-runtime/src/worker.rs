@@ -16,17 +16,17 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use chrono;
 use futures::FutureExt;
-use sayiir_core::codec::sealed;
-use sayiir_core::codec::{Codec, EnvelopeCodec, LoopDecision};
-use sayiir_core::context::{TaskExecutionContext, with_task_context};
-use sayiir_core::error::{BoxError, CodecError, WorkflowError};
-use sayiir_core::registry::TaskRegistry;
-use sayiir_core::snapshot::{
+use glirulus_core::codec::sealed;
+use glirulus_core::codec::{Codec, EnvelopeCodec, LoopDecision};
+use glirulus_core::context::{TaskExecutionContext, with_task_context};
+use glirulus_core::error::{BoxError, CodecError, WorkflowError};
+use glirulus_core::registry::TaskRegistry;
+use glirulus_core::snapshot::{
     ExecutionPosition, SignalKind, SignalRequest, TaskDeadline, TaskHint, WorkflowSnapshot,
 };
-use sayiir_core::task_claim::AvailableTask;
-use sayiir_core::workflow::{Workflow, WorkflowContinuation, WorkflowStatus};
-use sayiir_persistence::{PersistentBackend, TaskClaimStore, TaskWakeupHint};
+use glirulus_core::task_claim::AvailableTask;
+use glirulus_core::workflow::{Workflow, WorkflowContinuation, WorkflowStatus};
+use glirulus_persistence::{PersistentBackend, TaskClaimStore, TaskWakeupHint};
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -53,20 +53,21 @@ fn staggered_poll_interval(worker_id: &str, poll_interval: Duration) -> time::In
 
 /// A list of workflow definitions keyed by their definition hash.
 pub type WorkflowRegistry<C, Input, M> =
-    Vec<(sayiir_core::DefinitionHash, Arc<Workflow<C, Input, M>>)>;
+    Vec<(glirulus_core::DefinitionHash, Arc<Workflow<C, Input, M>>)>;
 
 /// Workflow definition for binding-friendly worker API.
 ///
 /// Contains only the structural information (definition hash + continuation tree)
 /// needed by `PooledWorker` for position tracking, completion detection, retry
 /// policies, and timeouts. Task execution is delegated to an external executor.
+#[derive(Clone)]
 pub struct ExternalWorkflow {
     /// The continuation tree describing the workflow structure.
     pub continuation: Arc<WorkflowContinuation>,
     /// Per-workflow `TaskId → metadata` index. Built once when the workflow
     /// is registered; replaces the O(N) tree walk + per-node SHA-256 that
     /// the worker would otherwise do for every task dispatch.
-    pub task_index: Arc<sayiir_core::TaskIndex>,
+    pub task_index: Arc<glirulus_core::TaskIndex>,
     /// Human-readable workflow name (for log/error display and FFI task executor).
     pub workflow_id: Arc<str>,
     /// Optional JSON-encoded workflow-level metadata.
@@ -74,24 +75,59 @@ pub struct ExternalWorkflow {
 }
 
 /// Workflow index keyed by definition hash for O(1) lookup during task dispatch.
-pub type WorkflowIndex = HashMap<sayiir_core::DefinitionHash, ExternalWorkflow>;
+pub type WorkflowIndex = HashMap<glirulus_core::DefinitionHash, ExternalWorkflow>;
+
+/// Live definition registration without restarting a pooled worker. Definitions
+/// are cloned before awaiting execution; no registry lock crosses an await.
+#[derive(Clone, Default)]
+pub struct LiveWorkflowIndex(Arc<std::sync::RwLock<WorkflowIndex>>);
+
+impl LiveWorkflowIndex {
+    /// Register or replace a definition for subsequent worker task dispatches.
+    pub fn insert(&self, hash: glirulus_core::DefinitionHash, workflow: ExternalWorkflow) {
+        self.0
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(hash, workflow);
+    }
+
+    fn get(&self, hash: &glirulus_core::DefinitionHash) -> Option<ExternalWorkflow> {
+        self.0
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(hash)
+            .cloned()
+    }
+}
+
+impl From<WorkflowIndex> for LiveWorkflowIndex {
+    fn from(index: WorkflowIndex) -> Self {
+        Self(Arc::new(std::sync::RwLock::new(index)))
+    }
+}
+
+impl WorkflowLookup for LiveWorkflowIndex {
+    fn contains_definition_hash(&self, hash: &glirulus_core::DefinitionHash) -> bool {
+        self.get(hash).is_some()
+    }
+}
 
 /// Definition-hash containment over either [`WorkflowIndex`] (`HashMap`,
 /// O(1)) or [`WorkflowRegistry`] (`Vec`, O(n)). Lets `can_handle_hint`
 /// accept any worker-registered workflows collection uniformly instead
 /// of taking a hand-rolled closure per call site.
 pub(crate) trait WorkflowLookup {
-    fn contains_definition_hash(&self, hash: &sayiir_core::DefinitionHash) -> bool;
+    fn contains_definition_hash(&self, hash: &glirulus_core::DefinitionHash) -> bool;
 }
 
 impl WorkflowLookup for WorkflowIndex {
-    fn contains_definition_hash(&self, hash: &sayiir_core::DefinitionHash) -> bool {
+    fn contains_definition_hash(&self, hash: &glirulus_core::DefinitionHash) -> bool {
         self.contains_key(hash)
     }
 }
 
 impl<C, Input, M> WorkflowLookup for WorkflowRegistry<C, Input, M> {
-    fn contains_definition_hash(&self, hash: &sayiir_core::DefinitionHash) -> bool {
+    fn contains_definition_hash(&self, hash: &glirulus_core::DefinitionHash) -> bool {
         self.iter().any(|(k, _)| k == hash)
     }
 }
@@ -140,6 +176,37 @@ impl<B> Clone for WorkerHandle<B> {
 }
 
 impl<B> WorkerHandle<B> {
+    /// Observe termination without taking ownership of the join future.
+    pub fn is_finished(&self) -> bool {
+        self.inner.join_handle.try_lock().ok().is_some_and(|guard| {
+            guard
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        })
+    }
+
+    /// Bound shutdown and reap the aborted task before returning on expiry.
+    pub async fn shutdown_with_timeout(
+        &self,
+        deadline: Duration,
+    ) -> Result<(), crate::error::RuntimeError> {
+        self.shutdown();
+        let Some(mut handle) = self.inner.join_handle.lock().await.take() else {
+            return Ok(());
+        };
+        match time::timeout(deadline, &mut handle).await {
+            Ok(result) => result?,
+            Err(_) => {
+                handle.abort();
+                let _ = handle.await;
+                Err(glirulus_persistence::BackendError::Backend(
+                    "worker shutdown deadline exceeded".into(),
+                )
+                .into())
+            }
+        }
+    }
+
     /// Request a graceful shutdown of the worker.
     ///
     /// The worker will finish its current task (if any) and then exit.
@@ -177,7 +244,7 @@ impl<B> WorkerHandle<B> {
 struct ActiveTaskClaim<'a, B> {
     backend: &'a B,
     instance_id: std::sync::Arc<str>,
-    task_id: sayiir_core::TaskId,
+    task_id: glirulus_core::TaskId,
     worker_id: String,
 }
 
@@ -238,7 +305,7 @@ fn extract_panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 /// # Example
 ///
 /// ```rust,no_run
-/// # use sayiir_runtime::prelude::*;
+/// # use glirulus_runtime::prelude::*;
 /// # use std::sync::Arc;
 /// # use std::time::Duration;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -490,6 +557,16 @@ where
         workflows: WorkflowIndex,
         executor: ExternalTaskExecutor,
     ) -> WorkerHandle<B> {
+        self.spawn_with_live_executor(poll_interval, workflows.into(), executor)
+    }
+
+    /// External execution with immutable definitions registered during intake.
+    pub fn spawn_with_live_executor(
+        self,
+        poll_interval: Duration,
+        workflows: LiveWorkflowIndex,
+        executor: ExternalTaskExecutor,
+    ) -> WorkerHandle<B> {
         let (tx, rx) = mpsc::channel(1);
         let backend = Arc::clone(&self.backend);
         let join_handle = tokio::spawn(async move {
@@ -509,7 +586,7 @@ where
     async fn run_external_actor_loop(
         &self,
         poll_interval: Duration,
-        workflows: WorkflowIndex,
+        workflows: LiveWorkflowIndex,
         executor: ExternalTaskExecutor,
         mut cmd_rx: mpsc::Receiver<WorkerCommand>,
     ) -> Result<(), crate::error::RuntimeError> {
@@ -588,7 +665,7 @@ where
                 if let Some(ext_wf) = workflows.get(&task.workflow_definition_hash) {
                     match self
                         .execute_external_task(
-                            ext_wf,
+                            &ext_wf,
                             &task.workflow_definition_hash,
                             &executor,
                             &task,
@@ -622,7 +699,7 @@ where
     /// True if the worker has the hint's workflow registered and its
     /// tag set covers the hint's tags.
     fn can_handle_hint(&self, hint: &TaskWakeupHint, workflows: &impl WorkflowLookup) -> bool {
-        let hash = sayiir_core::DefinitionHash::from_bytes(hint.definition_hash);
+        let hash = glirulus_core::DefinitionHash::from_bytes(hint.definition_hash);
         if !workflows.contains_definition_hash(&hash) {
             return false;
         }
@@ -635,7 +712,7 @@ where
     async fn try_hinted_execute(
         &self,
         hint: &TaskWakeupHint,
-        workflows: &WorkflowIndex,
+        workflows: &LiveWorkflowIndex,
         executor: &ExternalTaskExecutor,
     ) -> Result<bool, crate::error::RuntimeError> {
         let Some(task) = self.backend.find_hinted_task(hint).await? else {
@@ -645,7 +722,7 @@ where
             return Ok(false);
         };
         match self
-            .execute_external_task(ext_wf, &task.workflow_definition_hash, executor, &task)
+            .execute_external_task(&ext_wf, &task.workflow_definition_hash, executor, &task)
             .await
         {
             Err(e) if e.is_timeout() => return Err(e),
@@ -671,7 +748,7 @@ where
     async fn execute_external_task(
         &self,
         ext_wf: &ExternalWorkflow,
-        definition_hash: &sayiir_core::DefinitionHash,
+        definition_hash: &glirulus_core::DefinitionHash,
         executor: &ExternalTaskExecutor,
         available_task: &AvailableTask,
     ) -> Result<WorkflowStatus, crate::error::RuntimeError> {
@@ -689,13 +766,10 @@ where
         let already_completed = Self::validate_task_preconditions(
             definition_hash,
             &ext_wf.task_index,
+            Some(&ext_wf.continuation),
             available_task,
             &available_task.snapshot,
         )?;
-        if already_completed {
-            return Ok(WorkflowStatus::InProgress);
-        }
-
         let Some(claim) = self.claim_task(available_task).await? else {
             return Ok(WorkflowStatus::InProgress);
         };
@@ -707,6 +781,29 @@ where
 
         // Past the claim gate — now pay for the deep clone exactly once.
         let mut snapshot = (*available_task.snapshot).clone();
+        if !already_completed
+            && Self::park_dispatched_control(
+                &ext_wf.continuation,
+                &available_task.task_id,
+                &mut snapshot,
+            )?
+        {
+            self.backend.save_snapshot(&mut snapshot).await?;
+            self.drain_pending_signal(&available_task.instance_id, &mut snapshot)
+                .await?;
+            claim.release().await?;
+            return Ok(WorkflowStatus::InProgress);
+        }
+        if already_completed {
+            return self
+                .resume_checkpointed_task(
+                    &ext_wf.continuation,
+                    available_task,
+                    &mut snapshot,
+                    claim,
+                )
+                .await;
+        }
 
         tracing::debug!(
             instance_id = %available_task.instance_id,
@@ -740,28 +837,29 @@ where
     ) -> ExecutionOutcome {
         let task_id = available_task.task_id;
         let input = available_task.input.clone();
-        // Resolve the human-readable task name from the prebuilt index so the
-        // FFI executor can look up the Python/Node function by name. No tree
-        // walk and no per-node SHA-256 — this is a single hash-map probe.
+        // Resolve the declared external task or Branch selector name, retaining
+        // the index fast path for ordinary tasks.
         let indexed_meta = ext_wf.task_index.get(&task_id);
-        let task_name: Arc<str> =
-            indexed_meta.map_or_else(|| Arc::from(task_id.to_hex()), |m| Arc::clone(m.name()));
+        let task_name =
+            Self::dispatch_task_name(&ext_wf.task_index, Some(&ext_wf.continuation), &task_id)
+                .unwrap_or_else(|| Arc::from(task_id.to_hex()));
 
-        let deadline =
-            if let Some(timeout) = indexed_meta.and_then(sayiir_core::TaskNodeMetadata::timeout) {
-                snapshot.set_task_deadline(task_id, timeout);
-                snapshot.refresh_task_deadline();
-                // Deadline lives in-process for `run_with_heartbeat`; it
-                // is persisted on the next save_task_result (which holds
-                // a FOR UPDATE lock and so can't race with check_and_*).
-                // A bare save_snapshot here would clobber a
-                // check_and_cancel that landed between
-                // check_post_claim_guards and now, silently resurrecting
-                // a cancelled workflow into InProgress.
-                snapshot.task_deadline.clone()
-            } else {
-                None
-            };
+        let deadline = if let Some(timeout) =
+            indexed_meta.and_then(glirulus_core::TaskNodeMetadata::timeout)
+        {
+            snapshot.set_task_deadline(task_id, timeout);
+            snapshot.refresh_task_deadline();
+            // Deadline lives in-process for `run_with_heartbeat`; it
+            // is persisted on the next save_task_result (which holds
+            // a FOR UPDATE lock and so can't race with check_and_*).
+            // A bare save_snapshot here would clobber a
+            // check_and_cancel that landed between
+            // check_post_claim_guards and now, silently resurrecting
+            // a cancelled workflow into InProgress.
+            snapshot.task_deadline.clone()
+        } else {
+            None
+        };
 
         let task_ctx = TaskExecutionContext {
             workflow_id: Arc::clone(&ext_wf.workflow_id),
@@ -801,7 +899,7 @@ where
         &self,
         outcome: ExecutionOutcome,
         continuation: &WorkflowContinuation,
-        task_index: &sayiir_core::TaskIndex,
+        task_index: &glirulus_core::TaskIndex,
         available_task: &AvailableTask,
         snapshot: &mut WorkflowSnapshot,
         claim: ActiveTaskClaim<'_, B>,
@@ -845,6 +943,8 @@ where
                     panic = %panic_msg,
                     "Task panicked - releasing claim"
                 );
+                snapshot.mark_failed(panic_msg.clone());
+                self.backend.save_snapshot(snapshot).await?;
                 claim.release_quietly().await;
                 Err(WorkflowError::TaskPanicked(panic_msg).into())
             }
@@ -863,6 +963,8 @@ where
                     error = %e,
                     "Task execution failed"
                 );
+                snapshot.mark_failed(e.to_string());
+                self.backend.save_snapshot(snapshot).await?;
                 claim.release_quietly().await;
                 Err(e)
             }
@@ -1075,13 +1177,10 @@ where
         let already_completed = Self::validate_task_preconditions(
             workflow.definition_hash(),
             workflow.task_index(),
+            None,
             &available_task,
             &available_task.snapshot,
         )?;
-        if already_completed {
-            return Ok(WorkflowStatus::InProgress);
-        }
-
         let Some(claim) = self.claim_task(&available_task).await? else {
             return Ok(WorkflowStatus::InProgress);
         };
@@ -1094,6 +1193,29 @@ where
 
         // Past the claim gate — now pay for the deep clone exactly once.
         let mut snapshot = (*available_task.snapshot).clone();
+        if !already_completed
+            && Self::park_dispatched_control(
+                workflow.continuation(),
+                &available_task.task_id,
+                &mut snapshot,
+            )?
+        {
+            self.backend.save_snapshot(&mut snapshot).await?;
+            self.drain_pending_signal(&available_task.instance_id, &mut snapshot)
+                .await?;
+            claim.release().await?;
+            return Ok(WorkflowStatus::InProgress);
+        }
+        if already_completed {
+            return self
+                .resume_checkpointed_task(
+                    workflow.continuation(),
+                    &available_task,
+                    &mut snapshot,
+                    claim,
+                )
+                .await;
+        }
 
         tracing::debug!(
             instance_id = %available_task.instance_id,
@@ -1166,7 +1288,7 @@ where
                         // or surfaces a TaskNotFound that hides the real
                         // problem.
                         let branch_name = branch.id().to_string();
-                        let terminal_tid = sayiir_core::TaskId::from(branch.terminal_task_id());
+                        let terminal_tid = glirulus_core::TaskId::from(branch.terminal_task_id());
                         let output = snapshot
                             .get_task_result_bytes(&terminal_tid)
                             .ok_or_else(|| WorkflowError::TaskNotFound(branch_name.clone()))?;
@@ -1188,21 +1310,22 @@ where
             indexed_meta.map_or_else(|| Arc::from(task_id.to_hex()), |m| Arc::clone(m.name()));
 
         // Set deadline if task has a timeout configured
-        let deadline =
-            if let Some(timeout) = indexed_meta.and_then(sayiir_core::TaskNodeMetadata::timeout) {
-                snapshot.set_task_deadline(task_id, timeout);
-                snapshot.refresh_task_deadline();
-                // Deadline lives in-process for `run_with_heartbeat`; it
-                // is persisted on the next save_task_result (which holds
-                // a FOR UPDATE lock and so can't race with check_and_*).
-                // A bare save_snapshot here would clobber a
-                // check_and_cancel that landed between
-                // check_post_claim_guards and now, silently resurrecting
-                // a cancelled workflow into InProgress.
-                snapshot.task_deadline.clone()
-            } else {
-                None
-            };
+        let deadline = if let Some(timeout) =
+            indexed_meta.and_then(glirulus_core::TaskNodeMetadata::timeout)
+        {
+            snapshot.set_task_deadline(task_id, timeout);
+            snapshot.refresh_task_deadline();
+            // Deadline lives in-process for `run_with_heartbeat`; it
+            // is persisted on the next save_task_result (which holds
+            // a FOR UPDATE lock and so can't race with check_and_*).
+            // A bare save_snapshot here would clobber a
+            // check_and_cancel that landed between
+            // check_post_claim_guards and now, silently resurrecting
+            // a cancelled workflow into InProgress.
+            snapshot.task_deadline.clone()
+        } else {
+            None
+        };
 
         let task_ctx = TaskExecutionContext {
             workflow_id: Arc::from(workflow.context().workflow_id()),
@@ -1242,7 +1365,7 @@ where
     /// Otherwise returns `Ok(None)` (caller falls through to existing error handling).
     async fn try_schedule_retry(
         &self,
-        task_index: &sayiir_core::TaskIndex,
+        task_index: &glirulus_core::TaskIndex,
         available_task: &AvailableTask,
         snapshot: &mut WorkflowSnapshot,
         error_msg: &str,
@@ -1251,7 +1374,7 @@ where
             return Ok(None);
         };
 
-        if snapshot.retries_exhausted(&available_task.task_id) {
+        if policy.max_retries == 0 || snapshot.retries_exhausted(&available_task.task_id) {
             return Ok(None);
         }
 
@@ -1398,14 +1521,31 @@ where
         }
     }
 
+    /// Core 1.0's index omits Branch selectors. The external executor dispatches
+    /// them by name, so only that path supplies its retained continuation.
+    fn dispatch_task_name(
+        task_index: &glirulus_core::TaskIndex,
+        continuation: Option<&WorkflowContinuation>,
+        task_id: &glirulus_core::TaskId,
+    ) -> Option<Arc<str>> {
+        task_index.name(task_id).cloned().or_else(|| {
+            continuation?.iter_nodes().find_map(|node| {
+                (node.kind == glirulus_core::workflow::NodeKind::Branch
+                    && glirulus_core::TaskId::from(node.id) == *task_id)
+                    .then(|| Arc::from(node.id))
+            })
+        })
+    }
+
     /// Validate task preconditions without side effects.
     ///
     /// Checks definition hash match, task existence in continuation,
-    /// and that the task is not already completed in the snapshot.
-    /// Returns `Ok(true)` if the task should be skipped (already completed).
+    /// and whether the current task has a retained result.
+    /// `Ok(true)` requires checkpoint continuation after claiming, never execution.
     fn validate_task_preconditions(
-        definition_hash: &sayiir_core::DefinitionHash,
-        task_index: &sayiir_core::TaskIndex,
+        definition_hash: &glirulus_core::DefinitionHash,
+        task_index: &glirulus_core::TaskIndex,
+        continuation: Option<&WorkflowContinuation>,
         available_task: &AvailableTask,
         snapshot: &WorkflowSnapshot,
     ) -> Result<bool, crate::error::RuntimeError> {
@@ -1417,7 +1557,7 @@ where
             .into());
         }
 
-        if !task_index.contains(&available_task.task_id) {
+        if Self::dispatch_task_name(task_index, continuation, &available_task.task_id).is_none() {
             tracing::error!(
                 instance_id = %available_task.instance_id,
                 task_id = %available_task.task_id,
@@ -1430,7 +1570,7 @@ where
             tracing::debug!(
                 instance_id = %available_task.instance_id,
                 task_id = %available_task.task_id,
-                "Task already completed, skipping"
+                "Task already completed, resuming checkpoint"
             );
             return Ok(true);
         }
@@ -1600,6 +1740,33 @@ where
         }
     }
 
+    /// A crash can persist the final task result before workflow completion.
+    /// Continue that checkpoint under a real claim without repeating its effect.
+    async fn resume_checkpointed_task(
+        &self,
+        continuation: &WorkflowContinuation,
+        available_task: &AvailableTask,
+        snapshot: &mut WorkflowSnapshot,
+        claim: ActiveTaskClaim<'_, B>,
+    ) -> Result<WorkflowStatus, crate::error::RuntimeError> {
+        let output = snapshot
+            .get_task_result(&available_task.task_id)
+            .map(|result| result.output.clone())
+            .ok_or_else(|| WorkflowError::TaskNotFound(available_task.task_id.to_hex()))?;
+        snapshot.clear_retry_state(&available_task.task_id);
+        self.commit_task_result(
+            continuation,
+            available_task,
+            snapshot,
+            output.clone(),
+            claim,
+        )
+        .await?;
+        Self::resolve_loop_completions(continuation, snapshot, self.backend.as_ref()).await?;
+        self.determine_post_task_status(continuation, available_task, snapshot, output)
+            .await
+    }
+
     /// Persist task result and release the claim.
     async fn commit_task_result(
         &self,
@@ -1653,9 +1820,9 @@ where
     ) -> Result<(), crate::error::RuntimeError> {
         loop {
             let (signal_id, signal_name, next_task_id) = match &snapshot.state {
-                sayiir_core::snapshot::WorkflowSnapshotState::InProgress {
+                glirulus_core::snapshot::WorkflowSnapshotState::InProgress {
                     position:
-                        sayiir_core::snapshot::ExecutionPosition::AtSignal {
+                        glirulus_core::snapshot::ExecutionPosition::AtSignal {
                             signal_id,
                             signal_name,
                             next_task_id,
@@ -1666,11 +1833,16 @@ where
                 _ => return Ok(()),
             };
 
-            let Some(payload) = self
+            let payload = self
                 .backend
                 .consume_event(instance_id, &signal_name)
+                .await?;
+            if crate::execution::refresh_consumed_signal(self.backend.as_ref(), snapshot, signal_id)
                 .await?
-            else {
+            {
+                continue;
+            }
+            let Some(payload) = payload else {
                 return Ok(());
             };
 
@@ -1681,7 +1853,7 @@ where
             );
             snapshot.mark_task_completed(signal_id, payload.clone());
             if let Some(next_id) = next_task_id {
-                snapshot.update_position(sayiir_core::snapshot::ExecutionPosition::AtTask {
+                snapshot.update_position(glirulus_core::snapshot::ExecutionPosition::AtTask {
                     task_id: next_id,
                 });
             } else {
@@ -1759,7 +1931,7 @@ where
     /// `snapshot.completed_tasks` before invoking the join task.
     fn find_fork_branches_for_join<'a>(
         continuation: &'a WorkflowContinuation,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
     ) -> Option<&'a [Arc<WorkflowContinuation>]> {
         match continuation {
             WorkflowContinuation::Task { next, .. }
@@ -1769,7 +1941,7 @@ where
                 .and_then(|n| Self::find_fork_branches_for_join(n, task_id)),
             WorkflowContinuation::Fork { branches, join, .. } => {
                 if let Some(join_cont) = join {
-                    let join_first = sayiir_core::TaskId::from(join_cont.first_task_id());
+                    let join_first = glirulus_core::TaskId::from(join_cont.first_task_id());
                     if join_first == *task_id {
                         return Some(&branches[..]);
                     }
@@ -1818,73 +1990,92 @@ where
         }
     }
 
-    /// Find a task function in the workflow continuation and return a reference.
-    ///
-    /// Tree-walk predicate: does `task_id` appear anywhere inside `continuation`?
-    ///
-    /// Only used by [`execute_task_by_id`] to pick which subtree to descend into
-    /// at a `Fork`/`Branch`/`Loop`/`ChildWorkflow` boundary. Validation on the
-    /// dispatch hot path uses [`sayiir_core::TaskIndex::contains`] instead.
-    fn find_task_id_in_continuation(
+    /// A persisted signal/delay advancement names its next node by ID. If that
+    /// head is another control node, park it under the normal dispatch claim;
+    /// it has no task body and must never reach the external task executor.
+    fn park_dispatched_control(
         continuation: &WorkflowContinuation,
-        task_id: &sayiir_core::TaskId,
-    ) -> bool {
+        task_id: &glirulus_core::TaskId,
+        snapshot: &mut WorkflowSnapshot,
+    ) -> Result<bool, crate::error::RuntimeError> {
+        match Self::find_continuation(continuation, task_id) {
+            Some(
+                head @ (WorkflowContinuation::AwaitSignal { .. }
+                | WorkflowContinuation::Delay { .. }),
+            ) => {
+                Self::set_position_at(head, snapshot)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Locate a dispatchable task/control head without choosing a Branch arm.
+    fn find_continuation<'a>(
+        continuation: &'a WorkflowContinuation,
+        task_id: &glirulus_core::TaskId,
+    ) -> Option<&'a WorkflowContinuation> {
         match continuation {
             WorkflowContinuation::Task { id, next, .. }
             | WorkflowContinuation::Delay { id, next, .. }
             | WorkflowContinuation::AwaitSignal { id, next, .. } => {
-                if sayiir_core::TaskId::from(id.as_str()) == *task_id {
-                    return true;
-                }
-                next.as_ref()
-                    .is_some_and(|n| Self::find_task_id_in_continuation(n, task_id))
-            }
-            WorkflowContinuation::Fork { branches, join, .. } => {
-                for branch in branches {
-                    if Self::find_task_id_in_continuation(branch, task_id) {
-                        return true;
-                    }
-                }
-                if let Some(join_cont) = join {
-                    Self::find_task_id_in_continuation(join_cont, task_id)
+                if glirulus_core::TaskId::from(id.as_str()) == *task_id {
+                    Some(continuation)
                 } else {
-                    false
+                    next.as_deref()
+                        .and_then(|next| Self::find_continuation(next, task_id))
                 }
             }
+            WorkflowContinuation::Fork { branches, join, .. } => branches
+                .iter()
+                .find_map(|branch| Self::find_continuation(branch, task_id))
+                .or_else(|| {
+                    join.as_deref()
+                        .and_then(|next| Self::find_continuation(next, task_id))
+                }),
             WorkflowContinuation::Branch {
+                id,
                 branches,
                 default,
                 next,
                 ..
             } => {
-                for branch_cont in branches.values() {
-                    if Self::find_task_id_in_continuation(branch_cont, task_id) {
-                        return true;
-                    }
+                if glirulus_core::TaskId::from(id.as_str()) == *task_id {
+                    return Some(continuation);
                 }
-                if let Some(def) = default
-                    && Self::find_task_id_in_continuation(def, task_id)
-                {
-                    return true;
-                }
-                next.as_ref()
-                    .is_some_and(|n| Self::find_task_id_in_continuation(n, task_id))
+                branches
+                    .values()
+                    .find_map(|branch| Self::find_continuation(branch, task_id))
+                    .or_else(|| {
+                        default
+                            .as_deref()
+                            .and_then(|branch| Self::find_continuation(branch, task_id))
+                    })
+                    .or_else(|| {
+                        next.as_deref()
+                            .and_then(|next| Self::find_continuation(next, task_id))
+                    })
             }
-            WorkflowContinuation::Loop { body, next, .. } => {
-                if Self::find_task_id_in_continuation(body, task_id) {
-                    return true;
-                }
-                next.as_ref()
-                    .is_some_and(|n| Self::find_task_id_in_continuation(n, task_id))
-            }
+            WorkflowContinuation::Loop { body, next, .. } => Self::find_continuation(body, task_id)
+                .or_else(|| {
+                    next.as_deref()
+                        .and_then(|next| Self::find_continuation(next, task_id))
+                }),
             WorkflowContinuation::ChildWorkflow { child, next, .. } => {
-                if Self::find_task_id_in_continuation(child, task_id) {
-                    return true;
-                }
-                next.as_ref()
-                    .is_some_and(|n| Self::find_task_id_in_continuation(n, task_id))
+                Self::find_continuation(child, task_id).or_else(|| {
+                    next.as_deref()
+                        .and_then(|next| Self::find_continuation(next, task_id))
+                })
             }
         }
+    }
+
+    /// Tree-walk predicate used to select the containing execution subtree.
+    fn find_task_id_in_continuation(
+        continuation: &WorkflowContinuation,
+        task_id: &glirulus_core::TaskId,
+    ) -> bool {
+        Self::find_continuation(continuation, task_id).is_some()
     }
 
     /// Execute a task by ID from the workflow continuation (iterative, no boxing).
@@ -1896,14 +2087,14 @@ where
     ) -> impl std::future::Future<Output = Result<Bytes, crate::error::RuntimeError>> + Send + 'a
     {
         async move {
-            let task_id_hash = sayiir_core::TaskId::from(task_id);
+            let task_id_hash = glirulus_core::TaskId::from(task_id);
             let task_id = &task_id_hash;
             let mut current = continuation;
 
             loop {
                 match current {
                     WorkflowContinuation::Task { id, func, next, .. } => {
-                        if sayiir_core::TaskId::from(id.as_str()) == *task_id {
+                        if glirulus_core::TaskId::from(id.as_str()) == *task_id {
                             let func = func
                                 .as_ref()
                                 .ok_or_else(|| WorkflowError::TaskNotImplemented(id.clone()))?;
@@ -2024,7 +2215,7 @@ where
                 // AtDelay -> AtTask inherit the next task's routing hints
                 // (mirrors save_park_checkpoint).
                 snapshot.set_task_hint(next_hint.as_ref().unwrap_or(&TaskHint::default()));
-                let delay_id = sayiir_core::TaskId::from(id.as_str());
+                let delay_id = glirulus_core::TaskId::from(id.as_str());
                 snapshot.update_position(ExecutionPosition::AtDelay {
                     delay_id,
                     entered_at,
@@ -2053,7 +2244,7 @@ where
                 // (mirrors save_park_checkpoint).
                 snapshot.set_task_hint(next_hint.as_ref().unwrap_or(&TaskHint::default()));
                 snapshot.update_position(ExecutionPosition::AtSignal {
-                    signal_id: sayiir_core::TaskId::from(id.as_str()),
+                    signal_id: glirulus_core::TaskId::from(id.as_str()),
                     signal_name: signal_name.clone(),
                     wake_at,
                     next_task_id,
@@ -2071,14 +2262,14 @@ where
     /// Update execution position after a task completes.
     fn update_position_after_task(
         continuation: &WorkflowContinuation,
-        completed_task_id: &sayiir_core::TaskId,
+        completed_task_id: &glirulus_core::TaskId,
         snapshot: &mut WorkflowSnapshot,
     ) -> Result<(), crate::error::RuntimeError> {
         match continuation {
             WorkflowContinuation::Task { id, next, .. }
             | WorkflowContinuation::Delay { id, next, .. }
             | WorkflowContinuation::AwaitSignal { id, next, .. } => {
-                if sayiir_core::TaskId::from(id.as_str()) == *completed_task_id {
+                if glirulus_core::TaskId::from(id.as_str()) == *completed_task_id {
                     if let Some(next_cont) = next.as_deref() {
                         Self::set_position_at(next_cont, snapshot)?;
                     }
@@ -2117,7 +2308,7 @@ where
                 // `collect_cached_branches`' lookup so the two views of "branch
                 // is done" stay in sync.
                 for branch in branches {
-                    let first_tid = sayiir_core::TaskId::from(branch.first_task_id());
+                    let first_tid = glirulus_core::TaskId::from(branch.first_task_id());
                     if snapshot.get_task_result(&first_tid).is_none() {
                         Self::set_position_at(branch, snapshot)?;
                         return Ok(());
@@ -2132,19 +2323,42 @@ where
                 }
             }
             WorkflowContinuation::Branch {
+                id,
                 branches,
                 default,
                 next,
                 ..
             } => {
-                for branch_cont in branches.values() {
-                    Self::update_position_after_task(branch_cont, completed_task_id, snapshot)?;
-                }
-                if let Some(def) = default {
-                    Self::update_position_after_task(def, completed_task_id, snapshot)?;
-                }
-                if let Some(next_cont) = next {
-                    Self::update_position_after_task(next_cont, completed_task_id, snapshot)?;
+                let branch_id = glirulus_core::TaskId::from(id.as_str());
+                if snapshot.get_task_result(&branch_id).is_some() {
+                    let Some(chosen) =
+                        Self::chosen_branch(id, branches, default.as_deref(), snapshot)?
+                    else {
+                        if let Some(next_cont) = next {
+                            if branch_id == *completed_task_id {
+                                Self::set_position_at(next_cont, snapshot)?;
+                            } else {
+                                Self::update_position_after_task(
+                                    next_cont,
+                                    completed_task_id,
+                                    snapshot,
+                                )?;
+                            }
+                        }
+                        return Ok(());
+                    };
+                    if branch_id == *completed_task_id {
+                        Self::set_position_at(chosen, snapshot)?;
+                    } else if Self::find_task_id_in_continuation(chosen, completed_task_id) {
+                        Self::update_position_after_task(chosen, completed_task_id, snapshot)?;
+                        if Self::is_workflow_complete(chosen, snapshot) {
+                            if let Some(next_cont) = next {
+                                Self::set_position_at(next_cont, snapshot)?;
+                            }
+                        }
+                    } else if let Some(next_cont) = next {
+                        Self::update_position_after_task(next_cont, completed_task_id, snapshot)?;
+                    }
                 }
             }
             WorkflowContinuation::Loop { body, next, .. } => {
@@ -2171,7 +2385,7 @@ where
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use sayiir_runtime::prelude::*;
+    /// # use glirulus_runtime::prelude::*;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // Auto-generated worker ID from hostname + PID
     /// let worker = PooledWorker::builder(InMemoryBackend::new(), TaskRegistry::new()).build();
@@ -2227,54 +2441,55 @@ where
                 } => {
                     // Only resolve if the loop isn't already marked complete.
                     if snapshot
-                        .get_task_result(&sayiir_core::TaskId::from(id))
+                        .get_task_result(&glirulus_core::TaskId::from(id))
                         .is_none()
                     {
                         let terminal_id = body.terminal_task_id();
                         if let Some(result) =
-                            snapshot.get_task_result(&sayiir_core::TaskId::from(terminal_id))
+                            snapshot.get_task_result(&glirulus_core::TaskId::from(terminal_id))
                         {
                             let output = result.output.clone();
                             match crate::execution::decode_loop_envelope(&output) {
                                 Ok((LoopDecision::Done, inner)) => {
-                                    snapshot.clear_loop_iteration(&sayiir_core::TaskId::from(id));
-                                    snapshot
-                                        .mark_task_completed(sayiir_core::TaskId::from(id), inner);
+                                    snapshot.clear_loop_iteration(&glirulus_core::TaskId::from(id));
+                                    snapshot.mark_task_completed(
+                                        glirulus_core::TaskId::from(id),
+                                        inner,
+                                    );
                                     backend.save_snapshot(snapshot).await?;
                                 }
                                 Ok((LoopDecision::Again, again_value)) => {
                                     let current_iter =
-                                        snapshot.loop_iteration(&sayiir_core::TaskId::from(id));
+                                        snapshot.loop_iteration(&glirulus_core::TaskId::from(id));
                                     let next_iter = current_iter + 1;
                                     if next_iter >= *max_iterations {
                                         match on_max {
-                                            sayiir_core::workflow::MaxIterationsPolicy::Fail => {
-                                                return Err(WorkflowError::MaxIterationsExceeded {
-                                                    loop_id: sayiir_core::TaskId::from(id),
-                                                    max_iterations: *max_iterations,
-                                                }
-                                                .into());
-                                            }
-                                            sayiir_core::workflow::MaxIterationsPolicy::ExitWithLast => {
-                                                snapshot.clear_loop_iteration(&sayiir_core::TaskId::from(id));
-                                                snapshot.mark_task_completed(
-                                                    sayiir_core::TaskId::from(id.as_str()),
-                                                    again_value,
-                                                );
-                                                backend.save_snapshot(snapshot).await?;
-                                            }
-                                        }
+                      glirulus_core::workflow::MaxIterationsPolicy::Fail => {
+                        return Err(
+                          WorkflowError::MaxIterationsExceeded {
+                            loop_id: glirulus_core::TaskId::from(id),
+                            max_iterations: *max_iterations,
+                          }
+                          .into(),
+                        );
+                      }
+                      glirulus_core::workflow::MaxIterationsPolicy::ExitWithLast => {
+                        snapshot.clear_loop_iteration(&glirulus_core::TaskId::from(id));
+                        snapshot.mark_task_completed(glirulus_core::TaskId::from(id.as_str()), again_value);
+                        backend.save_snapshot(snapshot).await?;
+                      }
+                    }
                                     } else {
                                         // Clear body task results so the body becomes
                                         // available for re-execution on the next poll.
                                         let body_ser = body.to_serializable();
                                         for tid in &body_ser.task_ids() {
                                             snapshot.remove_task_result(
-                                                &sayiir_core::TaskId::from(*tid),
+                                                &glirulus_core::TaskId::from(*tid),
                                             );
                                         }
                                         snapshot.set_loop_iteration(
-                                            sayiir_core::TaskId::from(id),
+                                            glirulus_core::TaskId::from(id),
                                             next_iter,
                                         );
                                         backend.save_snapshot(snapshot).await?;
@@ -2282,7 +2497,7 @@ where
                                 }
                                 Err(e) => {
                                     return Err(CodecError::DecodeFailed {
-                                        task_id: sayiir_core::TaskId::from(id),
+                                        task_id: glirulus_core::TaskId::from(id),
                                         expected_type: "LoopEnvelope",
                                         source: e,
                                     }
@@ -2324,6 +2539,65 @@ where
         })
     }
 
+    /// A selector checkpoint retains the full versioned input for its chosen
+    /// child. A routing key selects its child; an explicit empty projection
+    /// completes a source-authored empty arm without inventing a task.
+    fn chosen_branch<'a>(
+        id: &str,
+        branches: &'a std::collections::HashMap<String, Box<WorkflowContinuation>>,
+        default: Option<&'a WorkflowContinuation>,
+        snapshot: &WorkflowSnapshot,
+    ) -> Result<Option<&'a WorkflowContinuation>, crate::error::RuntimeError> {
+        let payload = snapshot
+            .get_task_result_bytes(&glirulus_core::TaskId::from(id))
+            .ok_or_else(|| {
+                WorkflowError::ResumeError("branch selector checkpoint unavailable".into())
+            })?;
+        #[cfg(feature = "json")]
+        {
+            let value: serde_json::Value = serde_json::from_slice(&payload).map_err(|_| {
+                WorkflowError::ResumeError("branch selector input unavailable".into())
+            })?;
+            let key = value
+                .get("routingKey")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    WorkflowError::ResumeError("branch routing key unavailable".into())
+                })?;
+            // A trusted external selector may explicitly select an authored empty
+            // arm. It has no child task; absent/unknown keys still fail closed.
+            let empty = value
+                .get("routingEmpty")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if empty {
+                if branches.contains_key(key) || default.is_some() {
+                    return Err(WorkflowError::ResumeError(
+                        "empty branch conflicts with a declared child".into(),
+                    )
+                    .into());
+                }
+                return Ok(None);
+            }
+            branches
+                .get(key)
+                .map(Box::as_ref)
+                .or(default)
+                .map(Some)
+                .ok_or_else(|| {
+                    WorkflowError::ResumeError("branch routing key is undeclared".into()).into()
+                })
+        }
+        #[cfg(not(feature = "json"))]
+        {
+            let _ = (payload, branches, default);
+            Err(WorkflowError::ResumeError(
+                "external branch requires a JSON routing projection".into(),
+            )
+            .into())
+        }
+    }
+
     /// Check if the workflow is complete based on the snapshot.
     fn is_workflow_complete(
         continuation: &WorkflowContinuation,
@@ -2333,7 +2607,7 @@ where
         match continuation {
             WorkflowContinuation::Task { id, next, .. } => {
                 if snapshot
-                    .get_task_result(&sayiir_core::TaskId::from(id))
+                    .get_task_result(&glirulus_core::TaskId::from(id))
                     .is_none()
                 {
                     return false;
@@ -2347,7 +2621,7 @@ where
             WorkflowContinuation::Delay { id, next, .. }
             | WorkflowContinuation::AwaitSignal { id, next, .. } => {
                 if snapshot
-                    .get_task_result(&sayiir_core::TaskId::from(id))
+                    .get_task_result(&glirulus_core::TaskId::from(id))
                     .is_none()
                 {
                     return false;
@@ -2369,21 +2643,24 @@ where
                     true
                 }
             }
-            WorkflowContinuation::Branch { id, next, .. } => {
-                // Branch is complete when the branch node itself has a cached result
-                if snapshot
-                    .get_task_result(&sayiir_core::TaskId::from(id))
-                    .is_none()
-                {
-                    return false;
-                }
-                next.as_ref()
-                    .is_none_or(|n| Self::is_workflow_complete(n, snapshot))
-            }
+            WorkflowContinuation::Branch {
+                id,
+                branches,
+                default,
+                next,
+                ..
+            } => Self::chosen_branch(id, branches, default.as_deref(), snapshot).is_ok_and(
+                |chosen| {
+                    chosen.is_none_or(|chosen| Self::is_workflow_complete(chosen, snapshot))
+                        && next
+                            .as_ref()
+                            .is_none_or(|n| Self::is_workflow_complete(n, snapshot))
+                },
+            ),
             WorkflowContinuation::Loop { id, next, .. } => {
                 // Loop is complete when the loop node itself has a cached result
                 if snapshot
-                    .get_task_result(&sayiir_core::TaskId::from(id))
+                    .get_task_result(&glirulus_core::TaskId::from(id))
                     .is_none()
                 {
                     return false;
@@ -2394,7 +2671,7 @@ where
             WorkflowContinuation::ChildWorkflow { id, next, .. } => {
                 // ChildWorkflow is complete when the node itself has a cached result
                 if snapshot
-                    .get_task_result(&sayiir_core::TaskId::from(id))
+                    .get_task_result(&glirulus_core::TaskId::from(id))
                     .is_none()
                 {
                     return false;
@@ -2504,9 +2781,9 @@ where
 mod tests {
     use super::*;
     use crate::serialization::JsonCodec;
-    use sayiir_core::registry::TaskRegistry;
-    use sayiir_core::snapshot::WorkflowSnapshot;
-    use sayiir_persistence::{InMemoryBackend, SignalStore, SnapshotStore};
+    use glirulus_core::registry::TaskRegistry;
+    use glirulus_core::snapshot::WorkflowSnapshot;
+    use glirulus_persistence::{InMemoryBackend, SignalStore, SnapshotStore};
 
     type EmptyWorkflows = WorkflowRegistry<JsonCodec, (), ()>;
 

@@ -895,9 +895,9 @@ impl WorkflowContinuation {
 /// # Serialization
 ///
 /// ```rust
-/// # use sayiir_core::prelude::*;
-/// # use sayiir_core::codec::{Encoder, Decoder, sealed};
-/// # use sayiir_core::workflow::SerializableContinuation;
+/// # use glirulus_core::prelude::*;
+/// # use glirulus_core::codec::{Encoder, Decoder, sealed};
+/// # use glirulus_core::workflow::SerializableContinuation;
 /// # use bytes::Bytes;
 /// # use std::sync::Arc;
 /// # struct MyCodec;
@@ -1712,9 +1712,9 @@ impl<C, Input, M> Workflow<C, Input, M> {
 /// # Example
 ///
 /// ```rust
-/// # use sayiir_core::prelude::*;
-/// # use sayiir_core::codec::{Encoder, Decoder, sealed};
-/// # use sayiir_core::workflow::SerializedWorkflowState;
+/// # use glirulus_core::prelude::*;
+/// # use glirulus_core::codec::{Encoder, Decoder, sealed};
+/// # use glirulus_core::workflow::SerializedWorkflowState;
 /// # use bytes::Bytes;
 /// # use std::sync::Arc;
 /// # struct MyCodec;
@@ -1901,7 +1901,7 @@ mod tests {
             .unwrap();
 
         // Verify the workflow was built successfully
-        // The workflow can be executed using a WorkflowRunner from sayiir-runtime
+        // The workflow can be executed using a WorkflowRunner from glirulus-runtime
         let _workflow_ref = &workflow;
     }
 

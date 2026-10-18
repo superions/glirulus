@@ -12,15 +12,15 @@
 //! (8 methods total) to satisfy `PersistentBackend`.
 
 use chrono::Duration;
-use sayiir_core::snapshot::{
+use glirulus_core::snapshot::{
     PauseRequest, SignalKind, SignalRequest, WorkflowSnapshot, WorkflowSnapshotState,
 };
-use sayiir_core::task_claim::{AvailableTask, TaskClaim};
+use glirulus_core::task_claim::{AvailableTask, TaskClaim};
 
 /// Wire-side representation of a 32-byte SHA-256 hash.
 ///
-/// The semantic newtypes [`sayiir_core::TaskId`] / [`sayiir_core::DefinitionHash`]
-/// don't cross this boundary as-is (would couple `sayiir-core` to nanoserde).
+/// The semantic newtypes [`glirulus_core::TaskId`] / [`glirulus_core::DefinitionHash`]
+/// don't cross this boundary as-is (would couple `glirulus-core` to nanoserde).
 /// Producers convert with `*hash.as_bytes()`; consumers wrap back with
 /// `TaskId::from_bytes(field)` / `DefinitionHash::from_bytes(field)`. The
 /// type-system guarantees live on either side of this alias — over the wire
@@ -43,9 +43,9 @@ pub struct TaskWakeupHint {
     /// `runner.run("…")` and that appears in Postgres `instance_id` columns
     /// and log spans).
     pub instance_id: String,
-    /// SHA-256 of the task node id — wraps to [`sayiir_core::TaskId`].
+    /// SHA-256 of the task node id — wraps to [`glirulus_core::TaskId`].
     pub task_id: HashBytes,
-    /// SHA-256 of the workflow definition — wraps to [`sayiir_core::DefinitionHash`].
+    /// SHA-256 of the workflow definition — wraps to [`glirulus_core::DefinitionHash`].
     /// Workers without this definition registered drop the wake without
     /// touching the DB.
     pub definition_hash: HashBytes,
@@ -196,7 +196,7 @@ pub trait SnapshotStore: Send + Sync {
     fn save_task_result(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         output: bytes::Bytes,
     ) -> impl Future<Output = Result<(), BackendError>> + Send;
 
@@ -280,7 +280,7 @@ pub trait SignalStore: SnapshotStore {
     fn check_and_cancel(
         &self,
         instance_id: &str,
-        interrupted_at_task: Option<sayiir_core::TaskId>,
+        interrupted_at_task: Option<glirulus_core::TaskId>,
     ) -> impl Future<Output = Result<bool, BackendError>> + Send {
         async move {
             let Some(request) = self.get_signal(instance_id, SignalKind::Cancel).await? else {
@@ -361,7 +361,7 @@ pub trait TaskClaimStore: Send + Sync {
     fn claim_task(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
         ttl: Option<Duration>,
     ) -> impl Future<Output = Result<Option<TaskClaim>, BackendError>> + Send;
@@ -370,7 +370,7 @@ pub trait TaskClaimStore: Send + Sync {
     fn release_task_claim(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
     ) -> impl Future<Output = Result<(), BackendError>> + Send;
 
@@ -378,7 +378,7 @@ pub trait TaskClaimStore: Send + Sync {
     fn extend_task_claim(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
         additional_duration: Duration,
     ) -> impl Future<Output = Result<(), BackendError>> + Send;
@@ -411,7 +411,7 @@ pub trait TaskClaimStore: Send + Sync {
     /// Default returns a future that never resolves (`std::future::pending`)
     /// — the worker's `interval.tick()` arm provides the cadence, so
     /// non-overriding backends keep their fixed-interval poll. Keeps
-    /// `sayiir-persistence` runtime-agnostic.
+    /// `glirulus-persistence` runtime-agnostic.
     fn wait_for_wakeup(
         &self,
         _timeout: std::time::Duration,
@@ -456,7 +456,7 @@ pub trait TaskResultStore: SnapshotStore {
     fn load_task_result(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
     ) -> impl Future<Output = Result<Option<bytes::Bytes>, BackendError>> + Send;
 }
 

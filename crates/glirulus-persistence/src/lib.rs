@@ -22,15 +22,15 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use sayiir_persistence::{InMemoryBackend, SnapshotStore};
-//! use sayiir_core::snapshot::WorkflowSnapshot;
+//! use glirulus_persistence::{InMemoryBackend, SnapshotStore};
+//! use glirulus_core::snapshot::WorkflowSnapshot;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create a backend (could be Redis, PostgreSQL, etc.)
 //! let backend = InMemoryBackend::new();
 //!
 //! // Save a snapshot
-//! let mut snapshot = WorkflowSnapshot::new("instance-123", sayiir_core::DefinitionHash::from("hash-abc"));
+//! let mut snapshot = WorkflowSnapshot::new("instance-123", glirulus_core::DefinitionHash::from("hash-abc"));
 //! backend.save_snapshot(&mut snapshot).await?;
 //!
 //! // Load it back

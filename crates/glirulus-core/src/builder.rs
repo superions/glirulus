@@ -5,7 +5,7 @@
 //! fork/join (`.branches` + `.join`), durable delays, signal waits, and
 //! conditional routing (`.route`).
 //!
-//! For the proc-macro DSL alternative, see the `workflow!` macro in `sayiir-macros`.
+//! For the proc-macro DSL alternative, see the `workflow!` macro in `glirulus-macros`.
 
 use crate::branch_key::BranchKey;
 use crate::codec::Codec;
@@ -312,8 +312,8 @@ impl<C, Input, M> WorkflowBuilder<C, Input, Input, M, NoContinuation, NoRegistry
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::prelude::*;
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::prelude::*;
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;
@@ -328,7 +328,7 @@ impl<C, Input, M> WorkflowBuilder<C, Input, Input, M, NoContinuation, NoRegistry
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let codec = Arc::new(MyCodec);
     /// # let metadata = Arc::new(());
-    /// use sayiir_core::prelude::*;
+    /// use glirulus_core::prelude::*;
     /// use std::time::Duration;
     ///
     /// let ctx = WorkflowContext::new("my-workflow", codec, metadata);
@@ -363,9 +363,9 @@ impl<C, Input, M> WorkflowBuilder<C, Input, Input, M, NoContinuation, NoRegistry
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::prelude::*;
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
-    /// # use sayiir_core::workflow::SerializableContinuation;
+    /// # use glirulus_core::prelude::*;
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::workflow::SerializableContinuation;
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;
@@ -497,7 +497,7 @@ where
     /// # Example
     ///
     /// ```rust,ignore
-    /// use sayiir_core::LoopResult;
+    /// use glirulus_core::LoopResult;
     ///
     /// workflow
     ///     .loop_task("refine", |draft: String| async move {
@@ -1023,8 +1023,8 @@ where
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::prelude::*;
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::prelude::*;
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;
@@ -1039,7 +1039,7 @@ where
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let codec = Arc::new(MyCodec);
     /// # let ctx = WorkflowContext::new("my-workflow", codec.clone(), Arc::new(()));
-    /// use sayiir_core::prelude::*;
+    /// use glirulus_core::prelude::*;
     ///
     /// let mut registry = TaskRegistry::new();
     /// registry.register_fn("double", codec.clone(), |i: u32| async move { Ok(i * 2) });
@@ -1206,8 +1206,8 @@ impl<C, Input, Output, M> WorkflowBuilder<C, Input, Output, M, WorkflowContinuat
     /// # Example
     ///
     /// ```rust
-    /// # use sayiir_core::prelude::*;
-    /// # use sayiir_core::codec::{Encoder, Decoder, sealed};
+    /// # use glirulus_core::prelude::*;
+    /// # use glirulus_core::codec::{Encoder, Decoder, sealed};
     /// # use bytes::Bytes;
     /// # use std::sync::Arc;
     /// # struct MyCodec;
@@ -1222,8 +1222,8 @@ impl<C, Input, Output, M> WorkflowBuilder<C, Input, Output, M, WorkflowContinuat
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let codec = Arc::new(MyCodec);
     /// # let ctx = WorkflowContext::new("my-workflow", codec, Arc::new(()));
-    /// use sayiir_core::prelude::*;
-    /// use sayiir_core::task::RetryPolicy;
+    /// use glirulus_core::prelude::*;
+    /// use glirulus_core::task::RetryPolicy;
     /// use std::time::Duration;
     ///
     /// let workflow = WorkflowBuilder::new(ctx)
@@ -1268,7 +1268,7 @@ impl<C, Input, Output, M, Cont, R> WorkflowBuilder<C, Input, Output, M, Cont, R>
     /// # Example
     ///
     /// ```rust,ignore
-    /// use sayiir_core::task::TaskMetadata;
+    /// use glirulus_core::task::TaskMetadata;
     ///
     /// workflow
     ///     .then("prepare", |input| async { Ok(input) })

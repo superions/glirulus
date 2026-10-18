@@ -5,9 +5,9 @@
 //! such as in-process execution, distributed execution, or execution with
 //! persistence and recovery.
 
-use sayiir_core::codec::sealed;
-use sayiir_core::codec::{Codec, EnvelopeCodec};
-use sayiir_core::workflow::{Workflow, WorkflowStatus};
+use glirulus_core::codec::sealed;
+use glirulus_core::codec::{Codec, EnvelopeCodec};
+use glirulus_core::workflow::{Workflow, WorkflowStatus};
 use std::future::Future;
 
 use crate::error::RuntimeError;

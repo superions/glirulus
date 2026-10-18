@@ -1,10 +1,10 @@
 use bytecheck::CheckBytes;
 use bytes::Bytes;
+use glirulus_core::codec::{CodecIdentity, Decoder, Encoder, sealed};
+use glirulus_core::error::BoxError;
+use glirulus_core::snapshot_format::CodecId;
 use rkyv::rancor::{Error, Strategy};
 use rkyv::{Archive, Deserialize, Serialize, from_bytes, to_bytes};
-use sayiir_core::codec::{CodecIdentity, Decoder, Encoder, sealed};
-use sayiir_core::error::BoxError;
-use sayiir_core::snapshot_format::CodecId;
 
 /// A codec that can serialize and deserialize values using rkyv.
 ///
@@ -14,8 +14,8 @@ use sayiir_core::snapshot_format::CodecId;
 ///
 /// ```rust,no_run
 /// use rkyv::{Archive, Deserialize, Serialize};
-/// use sayiir_runtime::serialization::RkyvCodec;
-/// use sayiir_core::codec::*;
+/// use glirulus_runtime::serialization::RkyvCodec;
+/// use glirulus_core::codec::*;
 ///
 /// #[derive(Archive, Serialize, Deserialize, Debug, PartialEq)]
 /// struct Example {
@@ -73,14 +73,14 @@ where
     }
 }
 
-impl sayiir_core::codec::EnvelopeCodec for RkyvCodec {
+impl glirulus_core::codec::EnvelopeCodec for RkyvCodec {
     fn decode_string(&self, bytes: &[u8]) -> Result<String, BoxError> {
         from_bytes::<String, Error>(bytes)
             .map_err(|e| format!("Failed to decode string with rkyv: {e}").into())
     }
 
     fn encode_branch_envelope(&self, key: &str, result_bytes: &[u8]) -> Result<Bytes, BoxError> {
-        use sayiir_core::task::BranchEnvelope;
+        use glirulus_core::task::BranchEnvelope;
 
         let envelope = BranchEnvelope {
             branch: key.to_string(),
@@ -93,7 +93,7 @@ impl sayiir_core::codec::EnvelopeCodec for RkyvCodec {
     }
 
     fn encode_named_results(&self, results: &[(String, Bytes)]) -> Result<Bytes, BoxError> {
-        use sayiir_core::branch_results::NamedBranchResults;
+        use glirulus_core::branch_results::NamedBranchResults;
 
         let nbr = NamedBranchResults::new(results.to_vec());
         let aligned_vec = to_bytes::<Error>(&nbr).map_err(|e| -> BoxError {
@@ -107,7 +107,7 @@ impl sayiir_core::codec::EnvelopeCodec for RkyvCodec {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use sayiir_core::codec::{LoopDecision, decode_loop_envelope, encode_loop_envelope};
+    use glirulus_core::codec::{LoopDecision, decode_loop_envelope, encode_loop_envelope};
 
     #[test]
     fn rkyv_loop_result_round_trip_done() {

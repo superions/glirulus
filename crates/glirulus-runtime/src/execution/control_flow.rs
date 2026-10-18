@@ -8,9 +8,9 @@ use std::ops::ControlFlow;
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use sayiir_core::error::WorkflowError;
-use sayiir_core::snapshot::{ExecutionPosition, TaskHint};
-use sayiir_persistence::SnapshotStore;
+use glirulus_core::error::WorkflowError;
+use glirulus_core::snapshot::{ExecutionPosition, TaskHint};
+use glirulus_persistence::SnapshotStore;
 
 use crate::error::RuntimeError;
 
@@ -18,7 +18,7 @@ use crate::error::RuntimeError;
 pub(crate) enum ParkReason {
     /// A durable delay that hasn't expired yet.
     Delay {
-        delay_id: sayiir_core::TaskId,
+        delay_id: glirulus_core::TaskId,
         wake_at: DateTime<Utc>,
         /// Pre-computed hint for the next task (priority + tags for persistence-layer advancement).
         next_task: Option<TaskHint>,
@@ -27,7 +27,7 @@ pub(crate) enum ParkReason {
     },
     /// Waiting for an external signal that hasn't arrived yet.
     AwaitingSignal {
-        signal_id: sayiir_core::TaskId,
+        signal_id: glirulus_core::TaskId,
         signal_name: String,
         timeout: Option<DateTime<Utc>>,
         /// Pre-computed hint for the next task (priority + tags for persistence-layer advancement).
@@ -79,7 +79,7 @@ pub(crate) fn compute_signal_timeout(
 /// the caller will propagate to `finalize_execution`.
 pub(crate) async fn save_park_checkpoint<B: SnapshotStore>(
     reason: ParkReason,
-    snapshot: &mut sayiir_core::snapshot::WorkflowSnapshot,
+    snapshot: &mut glirulus_core::snapshot::WorkflowSnapshot,
     backend: &B,
 ) -> RuntimeError {
     match reason {

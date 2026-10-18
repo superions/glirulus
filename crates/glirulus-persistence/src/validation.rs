@@ -1,6 +1,6 @@
 //! Shared validation helpers for persistence backends.
 
-use sayiir_core::snapshot::{SignalKind, SnapshotStatus};
+use glirulus_core::snapshot::{SignalKind, SnapshotStatus};
 
 use crate::BackendError;
 

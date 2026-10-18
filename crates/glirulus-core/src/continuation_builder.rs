@@ -1,8 +1,8 @@
 //! Shared continuation builder for binding crates (Node.js, Python).
 //!
 //! Provides a binding-agnostic [`BuilderTask`] enum and [`build_continuation`]
-//! function that both `sayiir-node` and `sayiir-py` delegate to, eliminating
-//! ~135 lines of duplicated logic per binding.
+//! function inherited from the upstream Node.js and Python bindings. Those
+//! bindings are not part of the Glirulus workspace.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -109,8 +109,8 @@ fn build_chain(chain: &[(String, TaskMetadata)]) -> Result<Box<WorkflowContinuat
     current.map(Box::new).ok_or(BuildError::EmptyBranch)
 }
 
-/// High-level builder that both binding crates (`sayiir-node`, `sayiir-py`)
-/// delegate to. Manages auto-incrementing counters for lambda / loop / branch
+/// High-level builder inherited from the upstream Node.js and Python bindings.
+/// Manages auto-incrementing counters for lambda / loop / branch
 /// IDs and collects [`BuilderTask`]s.
 pub struct FlowBuilder {
     tasks: Vec<BuilderTask>,

@@ -1,13 +1,37 @@
 //! Guards, retry, deadline, and task execution primitives.
 
 use bytes::Bytes;
-use sayiir_core::snapshot::{ExecutionPosition, WorkflowSnapshot, WorkflowSnapshotState};
-use sayiir_core::workflow::{WorkflowContinuation, WorkflowStatus};
-use sayiir_persistence::{SignalStore, SnapshotStore};
+use glirulus_core::snapshot::{ExecutionPosition, WorkflowSnapshot, WorkflowSnapshotState};
+use glirulus_core::workflow::{WorkflowContinuation, WorkflowStatus};
+use glirulus_persistence::{SignalStore, SnapshotStore};
 use std::future::Future;
 
 use crate::error::RuntimeError;
-use sayiir_core::error::{CodecError, WorkflowError};
+use glirulus_core::error::{CodecError, WorkflowError};
+
+/// Some durable backends consume and advance atomically. Keep that committed
+/// checkpoint rather than saving a stale pre-consumption snapshot over it.
+pub(crate) async fn refresh_consumed_signal<B: SnapshotStore>(
+    backend: &B,
+    snapshot: &mut WorkflowSnapshot,
+    signal_id: glirulus_core::TaskId,
+) -> Result<bool, RuntimeError> {
+    let current = backend.load_snapshot(&snapshot.instance_id).await?;
+    if matches!(current.state, WorkflowSnapshotState::Cancelled { .. }) {
+        *snapshot = current;
+        return Err(WorkflowError::cancelled().into());
+    }
+    if matches!(current.state, WorkflowSnapshotState::Failed { .. }) {
+        *snapshot = current;
+        return Err(WorkflowError::ResumeError("signal continuation is failed".into()).into());
+    }
+    if current.state.is_terminal() || current.get_task_result(&signal_id).is_some() {
+        *snapshot = current;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
 
 // ── Guards ──────────────────────────────────────────────────────────────
 
@@ -18,7 +42,7 @@ use sayiir_core::error::{CodecError, WorkflowError};
 pub(crate) async fn check_guards<B: SignalStore>(
     backend: &B,
     instance_id: &str,
-    cancel_scope: Option<sayiir_core::TaskId>,
+    cancel_scope: Option<glirulus_core::TaskId>,
 ) -> Result<(), RuntimeError> {
     if backend.check_and_cancel(instance_id, cancel_scope).await? {
         return Err(WorkflowError::cancelled().into());
@@ -38,7 +62,7 @@ pub(crate) enum ParkedCheckResult {
     /// The wake time has not yet arrived.
     StillWaiting {
         wake_at: chrono::DateTime<chrono::Utc>,
-        node_id: sayiir_core::TaskId,
+        node_id: glirulus_core::TaskId,
     },
     /// The wake time has passed; execution can continue.
     Expired,
@@ -62,7 +86,7 @@ impl ParkedCheckResult {
 pub(crate) async fn check_parked_position<B: SignalStore>(
     backend: &B,
     instance_id: &str,
-    node_id: sayiir_core::TaskId,
+    node_id: glirulus_core::TaskId,
     wake_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<ParkedCheckResult, RuntimeError> {
     if backend.check_and_cancel(instance_id, Some(node_id)).await? {
@@ -98,20 +122,20 @@ pub(crate) enum ResumeParkedPosition {
     /// Workflow was parked at a durable delay.
     Delay {
         wake_at: chrono::DateTime<chrono::Utc>,
-        delay_id: sayiir_core::TaskId,
-        next_task_id: Option<sayiir_core::TaskId>,
+        delay_id: glirulus_core::TaskId,
+        next_task_id: Option<glirulus_core::TaskId>,
     },
     /// Workflow was parked at a fork (one or more branches waiting).
     Fork {
         wake_at: chrono::DateTime<chrono::Utc>,
-        fork_id: sayiir_core::TaskId,
+        fork_id: glirulus_core::TaskId,
     },
     /// Workflow was parked waiting for an external signal.
     Signal {
-        signal_id: sayiir_core::TaskId,
+        signal_id: glirulus_core::TaskId,
         signal_name: String,
         wake_at: Option<chrono::DateTime<chrono::Utc>>,
-        next_task_id: Option<sayiir_core::TaskId>,
+        next_task_id: Option<glirulus_core::TaskId>,
     },
     /// Snapshot is not in a parked position.
     NotParked,
@@ -235,8 +259,17 @@ impl ResumeParkedPosition {
                     return Ok(Some(WorkflowStatus::Paused { reason, paused_by }));
                 }
 
-                // Try to consume a buffered signal
-                if let Some(payload) = backend.consume_event(instance_id, &signal_name).await? {
+                // Arbitration may persist expiry/Stop without returning a payload.
+                // Refresh before the legacy timeout fallback can overwrite that state.
+                let payload = backend.consume_event(instance_id, &signal_name).await?;
+                if refresh_consumed_signal(backend, snapshot, signal_id).await? {
+                    return Ok(if snapshot.state.is_terminal() {
+                        Some(WorkflowStatus::Completed)
+                    } else {
+                        None
+                    });
+                }
+                if let Some(payload) = payload {
                     tracing::info!(instance_id, %signal_id, %signal_name, "signal received, advancing");
                     // Store under signal_id (node ID) so the executor's skip logic finds it
                     snapshot.mark_task_completed(signal_id, payload);
@@ -289,7 +322,7 @@ impl ResumeParkedPosition {
 /// Combines `EnvelopeCodec::decode_string` with the `HashMap` lookup and
 /// `BranchKeyNotFound` error, eliminating the 7-line pattern repeated in
 /// every executor.
-pub(crate) fn resolve_branch<'a, E: sayiir_core::codec::EnvelopeCodec>(
+pub(crate) fn resolve_branch<'a, E: glirulus_core::codec::EnvelopeCodec>(
     branch_id: &str,
     key_bytes: &[u8],
     branches: &'a std::collections::HashMap<String, Box<WorkflowContinuation>>,
@@ -300,7 +333,7 @@ pub(crate) fn resolve_branch<'a, E: sayiir_core::codec::EnvelopeCodec>(
         envelope_codec
             .decode_string(key_bytes)
             .map_err(|e| CodecError::DecodeFailed {
-                task_id: sayiir_core::TaskId::from(branch_id),
+                task_id: glirulus_core::TaskId::from(branch_id),
                 expected_type: "String (branch key)",
                 source: e,
             })?;
@@ -321,7 +354,7 @@ pub(crate) fn resolve_branch<'a, E: sayiir_core::codec::EnvelopeCodec>(
 ///
 /// When `policy` is `None`, the builder allows zero retries (i.e. no retry).
 pub(super) fn policy_to_backoff(
-    policy: Option<&sayiir_core::task::RetryPolicy>,
+    policy: Option<&glirulus_core::task::RetryPolicy>,
 ) -> backon::ExponentialBuilder {
     match policy {
         Some(rp) => {
@@ -342,7 +375,7 @@ pub(super) fn policy_to_backoff(
 ///
 pub(crate) async fn retry_with_checkpoint<B>(
     task_id: &str,
-    retry_policy: Option<&sayiir_core::task::RetryPolicy>,
+    retry_policy: Option<&glirulus_core::task::RetryPolicy>,
     timeout: Option<&std::time::Duration>,
     snapshot: &mut WorkflowSnapshot,
     save_backend: Option<&B>,
@@ -354,15 +387,15 @@ where
     loop {
         match execute(snapshot).await {
             Ok(output) => {
-                snapshot.clear_retry_state(&sayiir_core::TaskId::from(task_id));
+                snapshot.clear_retry_state(&glirulus_core::TaskId::from(task_id));
                 return Ok(output);
             }
             Err(e) => {
                 if let Some(rp) = retry_policy
-                    && !snapshot.retries_exhausted(&sayiir_core::TaskId::from(task_id))
+                    && !snapshot.retries_exhausted(&glirulus_core::TaskId::from(task_id))
                 {
                     let next_retry_at = snapshot.record_retry(
-                        sayiir_core::TaskId::from(task_id),
+                        glirulus_core::TaskId::from(task_id),
                         rp,
                         &e.to_string(),
                         None,
@@ -375,7 +408,7 @@ where
 
                     tracing::info!(
                         task_id = %task_id,
-                        attempt = snapshot.get_retry_state(&sayiir_core::TaskId::from(task_id)).map_or(0, |rs| rs.attempts),
+                        attempt = snapshot.get_retry_state(&glirulus_core::TaskId::from(task_id)).map_or(0, |rs| rs.attempts),
                         max_retries = rp.max_retries,
                         %next_retry_at,
                         error = %e,
@@ -408,7 +441,9 @@ const MIN_DEADLINE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::fr
 
 /// Compute the check interval for a deadline: `min(1s, remaining / 2)`,
 /// clamped to at least 1ms.
-fn deadline_check_interval(deadline: &sayiir_core::snapshot::TaskDeadline) -> std::time::Duration {
+fn deadline_check_interval(
+    deadline: &glirulus_core::snapshot::TaskDeadline,
+) -> std::time::Duration {
     let remaining = (deadline.deadline - chrono::Utc::now())
         .to_std()
         .unwrap_or_default();
@@ -425,11 +460,11 @@ pub(crate) async fn set_deadline_if_needed<B: SnapshotStore>(
     backend: &B,
 ) -> Result<(), RuntimeError> {
     if snapshot
-        .get_task_result(&sayiir_core::TaskId::from(id))
+        .get_task_result(&glirulus_core::TaskId::from(id))
         .is_none()
         && let Some(d) = timeout
     {
-        snapshot.set_task_deadline(sayiir_core::TaskId::from(id), *d);
+        snapshot.set_task_deadline(glirulus_core::TaskId::from(id), *d);
         backend.save_snapshot(snapshot).await?;
     }
     Ok(())
@@ -465,7 +500,7 @@ where
     E: Into<RuntimeError>,
 {
     if let Some(cached) = snapshot
-        .get_task_result(&sayiir_core::TaskId::from(id))
+        .get_task_result(&glirulus_core::TaskId::from(id))
         .map(|r| r.output.clone())
     {
         snapshot.clear_task_deadline();
@@ -512,7 +547,7 @@ where
     };
 
     snapshot.clear_task_deadline();
-    snapshot.mark_task_completed(sayiir_core::TaskId::from(id), output.clone());
+    snapshot.mark_task_completed(glirulus_core::TaskId::from(id), output.clone());
     Ok(output)
 }
 
@@ -540,14 +575,14 @@ where
     B: SnapshotStore,
 {
     if let Some(cached) = snapshot
-        .get_task_result(&sayiir_core::TaskId::from(id))
+        .get_task_result(&glirulus_core::TaskId::from(id))
         .map(|r| r.output.clone())
     {
         return Ok(cached);
     }
 
     if let Some(d) = timeout {
-        snapshot.set_task_deadline(sayiir_core::TaskId::from(id), *d);
+        snapshot.set_task_deadline(glirulus_core::TaskId::from(id), *d);
     }
     let output = execute(input).await.map_err(Into::into)?;
 
@@ -562,7 +597,11 @@ where
     snapshot.clear_task_deadline();
 
     backend
-        .save_task_result(instance_id, &sayiir_core::TaskId::from(id), output.clone())
+        .save_task_result(
+            instance_id,
+            &glirulus_core::TaskId::from(id),
+            output.clone(),
+        )
         .await?;
     Ok(output)
 }
@@ -573,7 +612,7 @@ where
 pub(crate) struct TaskStepParams<'a> {
     pub id: &'a str,
     pub timeout: Option<&'a std::time::Duration>,
-    pub retry_policy: Option<&'a sayiir_core::task::RetryPolicy>,
+    pub retry_policy: Option<&'a glirulus_core::task::RetryPolicy>,
     pub next: Option<&'a WorkflowContinuation>,
 }
 
@@ -602,7 +641,7 @@ where
     check_guards(
         backend,
         &snapshot.instance_id,
-        Some(sayiir_core::TaskId::from(params.id)),
+        Some(glirulus_core::TaskId::from(params.id)),
     )
     .await?;
     set_deadline_if_needed(params.id, params.timeout, snapshot, backend).await?;

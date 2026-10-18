@@ -1,8 +1,8 @@
 use super::WorkflowRunner;
 use crate::execution::execute_continuation_async;
-use sayiir_core::codec::sealed;
-use sayiir_core::codec::{Codec, EnvelopeCodec};
-use sayiir_core::workflow::{Workflow, WorkflowStatus};
+use glirulus_core::codec::sealed;
+use glirulus_core::codec::{Codec, EnvelopeCodec};
+use glirulus_core::workflow::{Workflow, WorkflowStatus};
 
 /// A workflow runner that executes workflows in-process.
 ///
@@ -12,9 +12,9 @@ use sayiir_core::workflow::{Workflow, WorkflowStatus};
 /// # Example
 ///
 /// ```rust,no_run
-/// # use sayiir_runtime::prelude::*;
+/// # use glirulus_runtime::prelude::*;
 /// # use std::sync::Arc;
-/// # async fn example() -> Result<(), sayiir_core::error::BoxError> {
+/// # async fn example() -> Result<(), glirulus_core::error::BoxError> {
 /// let ctx = WorkflowContext::new("my-workflow", Arc::new(RkyvCodec), Arc::new(()));
 /// let workflow = WorkflowBuilder::new(ctx)
 ///     .then("test", |i: u32| async move { Ok(i + 1) })
@@ -60,9 +60,9 @@ impl WorkflowRunner for InProcessRunner {
 mod tests {
     use super::*;
     use crate::serialization::JsonCodec;
-    use sayiir_core::context::WorkflowContext;
-    use sayiir_core::task::BranchOutputs;
-    use sayiir_core::workflow::WorkflowBuilder;
+    use glirulus_core::context::WorkflowContext;
+    use glirulus_core::task::BranchOutputs;
+    use glirulus_core::workflow::WorkflowBuilder;
     use std::sync::Arc;
 
     fn ctx() -> WorkflowContext<JsonCodec, ()> {
@@ -100,7 +100,7 @@ mod tests {
     async fn test_task_failure_returns_failed_status() {
         let workflow = WorkflowBuilder::new(ctx())
             .then("fail", |_i: u32| async move {
-                Err::<u32, sayiir_core::error::BoxError>("intentional failure".into())
+                Err::<u32, glirulus_core::error::BoxError>("intentional failure".into())
             })
             .build()
             .unwrap();
@@ -142,7 +142,7 @@ mod tests {
         let workflow = WorkflowBuilder::new(ctx())
             .then("step1", |i: u32| async move { Ok(i + 1) })
             .then("fail_step", |_i: u32| async move {
-                Err::<u32, sayiir_core::error::BoxError>("step2 failed".into())
+                Err::<u32, glirulus_core::error::BoxError>("step2 failed".into())
             })
             .then("step3", |i: u32| async move { Ok(i * 2) })
             .build()

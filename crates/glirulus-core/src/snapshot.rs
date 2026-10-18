@@ -56,7 +56,7 @@ impl TaskHint {
 /// distributed worker, the deadline is checked on every heartbeat tick. In
 /// single-process runners, a periodic interval checks the persisted deadline.
 ///
-/// See the `sayiir-runtime` README for full timeout documentation.
+/// See the `glirulus-runtime` README for full timeout documentation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDeadline {
     /// The task this deadline applies to.

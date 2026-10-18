@@ -1,6 +1,6 @@
 //! Durable snapshot wire format: a self-describing, versioned envelope.
 //!
-//! Every durable backend ([`sayiir-postgres`], [`sayiir-d1`]) stores a workflow
+//! The durable PostgreSQL backend ([`glirulus-postgres`]) stores a workflow
 //! snapshot as an opaque byte blob. Historically that blob was *raw* codec
 //! output with no header, which meant the bytes could not be identified,
 //! version-checked, or safely migrated: a struct-layout change silently broke
@@ -25,14 +25,14 @@
 //! and `alloc` (for [`Vec`]) — no `std` — keeping the format **wasm-safe** for
 //! the Cloudflare Workers / D1 path.
 //!
-//! See `docs/FORMAT.md` for the normative specification and compatibility policy.
+//! Glirulus preserves the upstream envelope and payload identities; renaming
+//! crates does not change this persisted format.
 //!
-//! [`sayiir-postgres`]: https://docs.rs/sayiir-postgres
-//! [`sayiir-d1`]: https://docs.rs/sayiir-d1
+//! [`glirulus-postgres`]: https://docs.rs/glirulus-postgres
 
 use core::fmt;
 
-/// Magic prefix identifying a Sayiir durable snapshot blob (`b"SYRS"`).
+/// Inherited Sayiir snapshot magic (`b"SYRS"`), retained for persisted data.
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"SYRS";
 
 /// Current durable snapshot format version.
@@ -57,7 +57,7 @@ pub enum CodecId {
     /// additive optional fields.
     Json = 1,
     /// `rkyv` zero-copy payload. Fast, but archives are fragile across
-    /// struct-layout changes — see the compatibility policy in `docs/FORMAT.md`.
+    /// struct-layout changes; the archive layout must match the writer.
     Rkyv = 2,
 }
 

@@ -1,4 +1,4 @@
-//! Error types for sayiir-core.
+//! Error types for glirulus-core.
 
 /// Generic boxed error type used throughout the crate.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

@@ -78,20 +78,20 @@ fn gen_impl(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
 
             pub const fn task_id() -> &'static str { #task_id }
 
-            pub fn metadata() -> ::sayiir_core::task::TaskMetadata {
+            pub fn metadata() -> ::glirulus_core::task::TaskMetadata {
                 #metadata_body
             }
 
             /// Register this task into a `TaskRegistry` with the given codec.
             pub fn register<C>(
-                registry: &mut ::sayiir_core::registry::TaskRegistry,
+                registry: &mut ::glirulus_core::registry::TaskRegistry,
                 codec: ::std::sync::Arc<C>,
                 task: Self,
             )
             where
-                C: ::sayiir_core::codec::Codec
-                    + ::sayiir_core::codec::sealed::DecodeValue<#input_ty>
-                    + ::sayiir_core::codec::sealed::EncodeValue<#output_ty>
+                C: ::glirulus_core::codec::Codec
+                    + ::glirulus_core::codec::sealed::DecodeValue<#input_ty>
+                    + ::glirulus_core::codec::sealed::EncodeValue<#output_ty>
                     + 'static,
             {
                 registry.register_with_metadata(#task_id, codec, task, Self::metadata());
@@ -126,7 +126,7 @@ fn gen_metadata_body(parsed: &ParsedTask) -> TokenStream {
         let multiplier = attrs.backoff_multiplier.unwrap_or(2.0_f32);
 
         Some(quote! {
-            retries: Some(::sayiir_core::task::RetryPolicy {
+            retries: Some(::glirulus_core::task::RetryPolicy {
                 max_retries: #max,
                 initial_delay: #backoff,
                 backoff_multiplier: #multiplier,
@@ -146,11 +146,11 @@ fn gen_metadata_body(parsed: &ParsedTask) -> TokenStream {
 
     let priority = attrs.priority.map(|p| {
         // Range validated at parse time in ParsedTask::parse.
-        quote! { priority: ::sayiir_core::priority::Priority::from_u8(#p), }
+        quote! { priority: ::glirulus_core::priority::Priority::from_u8(#p), }
     });
 
     quote! {
-        ::sayiir_core::task::TaskMetadata {
+        ::glirulus_core::task::TaskMetadata {
             #display_name
             #description
             #timeout
@@ -168,9 +168,9 @@ fn gen_registerable_task(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream 
     let metadata_body = gen_metadata_body(parsed);
 
     quote! {
-        impl ::sayiir_core::task::RegisterableTask for #name {
+        impl ::glirulus_core::task::RegisterableTask for #name {
             fn task_id() -> &'static str { #task_id }
-            fn metadata() -> ::sayiir_core::task::TaskMetadata {
+            fn metadata() -> ::glirulus_core::task::TaskMetadata {
                 #metadata_body
             }
         }
@@ -207,14 +207,14 @@ fn gen_deps_impl(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
                 /// This task has no `#[inject]` parameters, so it is equivalent
                 /// to `Self::default()`.
                 #[must_use]
-                pub fn from_deps(_deps: &::sayiir_core::deps::Deps) -> Self {
+                pub fn from_deps(_deps: &::glirulus_core::deps::Deps) -> Self {
                     <Self as ::std::default::Default>::default()
                 }
 
                 /// Verify that the `Deps` container holds every dependency this
                 /// task requires. No-inject tasks always succeed.
                 #[must_use]
-                pub fn verify_deps(_deps: &::sayiir_core::deps::Deps) -> ::std::vec::Vec<::sayiir_core::deps::MissingDep> {
+                pub fn verify_deps(_deps: &::glirulus_core::deps::Deps) -> ::std::vec::Vec<::glirulus_core::deps::MissingDep> {
                     ::std::vec::Vec::new()
                 }
             }
@@ -229,7 +229,7 @@ fn gen_deps_impl(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
             let ty = &p.ty;
             quote! {
                 if !deps.contains::<#ty>() {
-                    missing.push(::sayiir_core::deps::MissingDep::of::<#ty>());
+                    missing.push(::glirulus_core::deps::MissingDep::of::<#ty>());
                 }
             }
         });
@@ -245,7 +245,7 @@ fn gen_deps_impl(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
                 /// [`Self::verify_deps`] at build time so missing deps surface
                 /// as a `BuildError::MissingDep` rather than a runtime panic.
                 #[must_use]
-                pub fn from_deps(deps: &::sayiir_core::deps::Deps) -> Self {
+                pub fn from_deps(deps: &::glirulus_core::deps::Deps) -> Self {
                     Self {
                         #(#field_inits,)*
                     }
@@ -254,7 +254,7 @@ fn gen_deps_impl(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
                 /// Verify that the `Deps` container holds every dependency this
                 /// task requires. Returns one `MissingDep` per missing type.
                 #[must_use]
-                pub fn verify_deps(deps: &::sayiir_core::deps::Deps) -> ::std::vec::Vec<::sayiir_core::deps::MissingDep> {
+                pub fn verify_deps(deps: &::glirulus_core::deps::Deps) -> ::std::vec::Vec<::glirulus_core::deps::MissingDep> {
                     let mut missing = ::std::vec::Vec::new();
                     #(#verify_checks)*
                     missing
@@ -267,11 +267,11 @@ fn gen_deps_impl(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
     // method precedence) so the generic `TaskRegistry::register_from_deps` and
     // the `workflow!` macro can drive these uniformly.
     let trait_impl = quote! {
-        impl ::sayiir_core::deps::DepsInjectable for #name {
-            fn from_deps(deps: &::sayiir_core::deps::Deps) -> Self {
+        impl ::glirulus_core::deps::DepsInjectable for #name {
+            fn from_deps(deps: &::glirulus_core::deps::Deps) -> Self {
                 Self::from_deps(deps)
             }
-            fn verify_deps(deps: &::sayiir_core::deps::Deps) -> ::std::vec::Vec<::sayiir_core::deps::MissingDep> {
+            fn verify_deps(deps: &::glirulus_core::deps::Deps) -> ::std::vec::Vec<::glirulus_core::deps::MissingDep> {
                 Self::verify_deps(deps)
             }
         }
@@ -309,11 +309,11 @@ fn gen_core_task(parsed: &ParsedTask, name: &syn::Ident) -> TokenStream {
     };
 
     quote! {
-        impl ::sayiir_core::task::CoreTask for #name {
+        impl ::glirulus_core::task::CoreTask for #name {
             type Input = #input_ty;
             type Output = #output_ty;
             type Future = ::std::pin::Pin<
-                Box<dyn ::std::future::Future<Output = Result<#output_ty, ::sayiir_core::error::BoxError>> + Send>
+                Box<dyn ::std::future::Future<Output = Result<#output_ty, ::glirulus_core::error::BoxError>> + Send>
             >;
 
             fn run(&self, #input_ident: #input_ty) -> Self::Future {

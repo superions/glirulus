@@ -1,8 +1,8 @@
 //! Typed error for the sayiir runtime layer.
 
-use sayiir_core::InvalidInstanceId;
-use sayiir_core::error::{BoxError, BuildError, BuildErrors, CodecError, WorkflowError};
-use sayiir_persistence::{BackendError, RunConflict};
+use glirulus_core::InvalidInstanceId;
+use glirulus_core::error::{BoxError, BuildError, BuildErrors, CodecError, WorkflowError};
+use glirulus_persistence::{BackendError, RunConflict};
 
 /// Typed error for the sayiir runtime layer.
 ///

@@ -10,7 +10,7 @@
 //! At least one codec feature **must** be enabled (enforced at compile time).
 //!
 //! The codec traits ([`Encoder`], [`Decoder`], [`EnvelopeCodec`]) are
-//! re-exported from [`sayiir_core::codec`] for convenience.
+//! re-exported from [`glirulus_core::codec`] for convenience.
 
 #[cfg(feature = "json")]
 mod json;
@@ -23,5 +23,5 @@ pub use json::JsonCodec;
 #[cfg(feature = "rkyv")]
 pub use rkyv::RkyvCodec;
 
-/// Re-export the codec traits from `sayiir-core`.
-pub use sayiir_core::codec::{Decoder, Encoder, EnvelopeCodec};
+/// Re-export the codec traits from `glirulus-core`.
+pub use glirulus_core::codec::{Decoder, Encoder, EnvelopeCodec};

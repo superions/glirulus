@@ -1,8 +1,8 @@
 //! [`SnapshotStore`] implementation for Postgres.
 
-use sayiir_core::codec;
-use sayiir_core::snapshot::{SnapshotStatus, WorkflowSnapshot};
-use sayiir_persistence::{BackendError, SnapshotStore};
+use glirulus_core::codec;
+use glirulus_core::snapshot::{SnapshotStatus, WorkflowSnapshot};
+use glirulus_persistence::{BackendError, SnapshotStore};
 use sqlx::Row;
 
 use crate::backend::PostgresBackend;
@@ -25,175 +25,7 @@ where
     )]
     #[allow(clippy::too_many_lines)]
     async fn save_snapshot(&self, snapshot: &mut WorkflowSnapshot) -> Result<(), BackendError> {
-        tracing::debug!("saving snapshot");
-        let (data, data_hash) = self.encode_blob_preserving(snapshot)?;
-        let status = snapshot.state.as_ref();
-        let task_id_bytes: Option<[u8; 32]> = snapshot.current_task_id().map(|t| *t.as_bytes());
-        let task_id: Option<&[u8]> = task_id_bytes.as_ref().map(<[u8; 32]>::as_slice);
-        let task_count = snapshot.completed_task_count();
-        let error = snapshot.error_message().map(ToString::to_string);
-        let terminal = snapshot.state.is_terminal();
-        let pos_kind = snapshot.position_kind();
-        let wake_at = snapshot.delay_wake_at();
-        let task_priority = i16::from(snapshot.current_task_priority());
-        // Bind the `&[String]` slice directly — sqlx encodes it as `text[]`,
-        // so the intermediate `Vec<&str>` collect (one alloc per save) is
-        // unnecessary.
-        let task_tags = snapshot.current_task_tags();
-        let terminal_status = match SnapshotStatus::from(&snapshot.state) {
-            SnapshotStatus::Failed => "failed",
-            SnapshotStatus::Cancelled => "cancelled",
-            _ => "completed",
-        };
-        let notify_payload = build_task_ready_payload(snapshot);
-
-        // Ship the just-completed output to the sidecar ONLY when flagged
-        // unflushed (set by `mark_task_completed`, cleared post-write). On
-        // position-only saves (pause/cancel/delay/signal parking) the flag is
-        // false, so both binds are NULL and the `task_output` CTE no-ops via
-        // `WHERE $18 IS NOT NULL` — no re-shipping. Safe: an unflagged output
-        // is already in `workflow_tasks`.
-        let output_unflushed = snapshot.output_unflushed;
-        let last_completed_task_id: Option<[u8; 32]> = output_unflushed
-            .then(|| snapshot.last_completed_task_id().map(|t| *t.as_bytes()))
-            .flatten();
-        let last_completed_slice: Option<&[u8]> =
-            last_completed_task_id.as_ref().map(<[u8; 32]>::as_slice);
-        let last_completed_output: Option<bytes::Bytes> = output_unflushed
-            .then(|| {
-                snapshot
-                    .last_completed_task_id()
-                    .and_then(|id| snapshot.get_task_result(&id).map(|r| r.output.clone()))
-            })
-            .flatten();
-        let last_completed_output_slice: Option<&[u8]> = last_completed_output.as_deref();
-
-        // One round-trip via a CTE chain: bump the snapshot version,
-        // append the history row at that version, refresh the
-        // workflow_tasks lifecycle, and queue the wakeup NOTIFY — all
-        // in one statement. Sibling DML CTEs in PG always run; the
-        // gates (`WHERE $task_id IS NOT NULL`, `WHERE $terminal`,
-        // `WHERE $notify IS NOT NULL`) make zero-row branches cheap
-        // no-ops without conditional Rust string building.
-        //
-        // The trailing `SELECT history_version FROM snap` is needed for
-        // the CTE chain to be a valid statement, but the value is not
-        // read on the caller side. `.execute()` skips PgRow allocation
-        // on the Rust side while still driving the full CTE on PG.
-        let query = "
-            WITH snap AS (
-                INSERT INTO sayiir_workflow_snapshots
-                    (instance_id, status, definition_hash, current_task_id,
-                     completed_task_count, error, position_kind, delay_wake_at,
-                     trace_parent, task_priority, task_tags, data_hash,
-                     completed_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $8, $9, $10, $11, $12, $13,
-                        CASE WHEN $7 THEN now() ELSE NULL END, now())
-                ON CONFLICT (instance_id) DO UPDATE SET
-                    status = $2,
-                    definition_hash = $3,
-                    current_task_id = $4,
-                    completed_task_count = $5,
-                    error = $6,
-                    position_kind = $8,
-                    delay_wake_at = $9,
-                    trace_parent = $10,
-                    task_priority = $11,
-                    task_tags = $12,
-                    data_hash = $13,
-                    history_version = sayiir_workflow_snapshots.history_version + 1,
-                    completed_at = CASE WHEN $7 THEN now() ELSE sayiir_workflow_snapshots.completed_at END,
-                    updated_at = now()
-                WHERE sayiir_workflow_snapshots.status NOT IN ('Completed', 'Failed', 'Cancelled')
-                RETURNING history_version
-            ),
-            hist AS (
-                INSERT INTO sayiir_workflow_snapshot_history
-                    (instance_id, version, status, current_task_id, data, data_hash)
-                SELECT $1, snap.history_version, $2, $4, $14, $13
-                FROM snap
-                RETURNING 1
-            ),
-            task_active AS (
-                INSERT INTO sayiir_workflow_tasks (instance_id, task_id, status, started_at)
-                SELECT $1, $4, 'active', now()
-                WHERE $4 IS NOT NULL AND NOT $7
-                  -- Skip when the just-completed task IS the current task
-                  -- (final task in a chain has next=None, so position stays
-                  -- on it and current_task_id == last_completed_task_id).
-                  -- The task_output CTE below already UPSERTs that row;
-                  -- this CTE doing it too trips PG`s rule that ON CONFLICT
-                  -- DO UPDATE cannot affect a row twice in one statement.
-                  AND $4 IS DISTINCT FROM $18
-                ON CONFLICT (instance_id, task_id) DO UPDATE SET
-                    status = CASE
-                        WHEN sayiir_workflow_tasks.status = 'completed' THEN sayiir_workflow_tasks.status
-                        ELSE 'active'
-                    END,
-                    started_at = COALESCE(sayiir_workflow_tasks.started_at, now())
-                RETURNING 1
-            ),
-            task_terminal AS (
-                UPDATE sayiir_workflow_tasks
-                SET status = $15, completed_at = now(), error = $6
-                WHERE instance_id = $1 AND status = 'active' AND $7
-                RETURNING 1
-            ),
-            task_output AS (
-                INSERT INTO sayiir_workflow_tasks
-                    (instance_id, task_id, status, completed_at, output)
-                SELECT $1, $18, 'completed', now(), $19
-                WHERE $18 IS NOT NULL
-                ON CONFLICT (instance_id, task_id) DO UPDATE SET
-                    status = 'completed',
-                    completed_at = now(),
-                    error = NULL,
-                    output = EXCLUDED.output
-                WHERE sayiir_workflow_tasks.output IS NULL
-                   OR sayiir_workflow_tasks.output IS DISTINCT FROM EXCLUDED.output
-                RETURNING 1
-            )
-            -- pg_notify lives in the outer SELECT (not a sibling CTE)
-            -- because PG's optimizer prunes unreferenced non-DML CTEs.
-            -- `WITH notify AS (SELECT pg_notify(...) WHERE ...)` without
-            -- a reference from the outer query is silently dropped and
-            -- the wake never fires; the `wait_for_wakeup_*` integration
-            -- tests catch that regression. CASE keeps the conditional
-            -- behaviour — `pg_notify` is only evaluated when the
-            -- payload is non-NULL because CASE short-circuits its arms.
-            SELECT history_version,
-                   CASE WHEN $17 IS NOT NULL THEN pg_notify($16, $17) END
-            FROM snap
-        ";
-
-        sqlx::query(query)
-            .bind(&*snapshot.instance_id) // $1
-            .bind(status) // $2
-            .bind(snapshot.definition_hash.as_bytes().as_slice()) // $3
-            .bind(task_id) // $4
-            .bind(task_count) // $5
-            .bind(&error) // $6
-            .bind(terminal) // $7
-            .bind(pos_kind) // $8
-            .bind(wake_at) // $9
-            .bind(snapshot.trace_parent.as_deref()) // $10
-            .bind(task_priority) // $11
-            .bind(task_tags) // $12
-            .bind(data_hash.as_slice()) // $13
-            .bind(&data) // $14
-            .bind(terminal_status) // $15
-            .bind(TASK_READY_CHANNEL) // $16
-            .bind(notify_payload.as_deref()) // $17
-            .bind(last_completed_slice) // $18
-            .bind(last_completed_output_slice) // $19
-            .execute(&self.pool)
-            .await
-            .map_err(PgError)?;
-        // The last completed output (if any) is now durable in
-        // `workflow_tasks`; clear the marker so a later save of this same
-        // in-memory snapshot binds NULL instead of re-shipping the bytes.
-        snapshot.output_unflushed = false;
-        Ok(())
+        self.save_snapshot_with_wait(snapshot).await
     }
 
     #[tracing::instrument(
@@ -205,7 +37,7 @@ where
     async fn save_task_result(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         output: bytes::Bytes,
     ) -> Result<(), BackendError> {
         tracing::debug!("saving task result");
@@ -371,5 +203,246 @@ where
             .map_err(PgError)?;
 
         Ok(rows.iter().map(|r| r.get("instance_id")).collect())
+    }
+}
+
+// Explicit retry appends a checkpoint, retaining all prior history/results.
+impl<C: codec::SnapshotCodec> PostgresBackend<C> {
+    /// Admission never rewinds a snapshot created concurrently by another caller.
+    pub async fn create_snapshot_if_absent(
+        &self,
+        snapshot: &mut WorkflowSnapshot,
+    ) -> Result<(), BackendError> {
+        self.save_snapshot_mode(snapshot, false, true, None).await
+    }
+
+    /// Create without rewinding a concurrent admission, inside the caller's transaction.
+    pub async fn create_snapshot_if_absent_in(
+        &self,
+        snapshot: &mut WorkflowSnapshot,
+        connection: &mut sqlx::PgConnection,
+    ) -> Result<(), BackendError> {
+        self.save_snapshot_mode(snapshot, false, true, Some(connection))
+            .await
+    }
+
+    /// Participate in the caller's existing transaction without owning its commit.
+    pub async fn restart_failed_snapshot_in(
+        &self,
+        snapshot: &mut WorkflowSnapshot,
+        connection: &mut sqlx::PgConnection,
+    ) -> Result<(), BackendError> {
+        self.save_snapshot_mode(snapshot, true, false, Some(connection))
+            .await
+    }
+
+    /// Restart a failed snapshot while retaining its prior history and task results.
+    pub async fn restart_failed_snapshot(
+        &self,
+        snapshot: &mut WorkflowSnapshot,
+    ) -> Result<(), BackendError> {
+        self.save_snapshot_mode(snapshot, true, false, None).await
+    }
+    pub(crate) async fn save_snapshot_mode(
+        &self,
+        snapshot: &mut WorkflowSnapshot,
+        restart_failed: bool,
+        create_only: bool,
+        connection: Option<&mut sqlx::PgConnection>,
+    ) -> Result<(), BackendError> {
+        tracing::debug!("saving snapshot");
+        let (data, data_hash) = self.encode_blob_preserving(snapshot)?;
+        let status = snapshot.state.as_ref();
+        let task_id_bytes: Option<[u8; 32]> = snapshot.current_task_id().map(|t| *t.as_bytes());
+        let task_id: Option<&[u8]> = task_id_bytes.as_ref().map(<[u8; 32]>::as_slice);
+        let task_count = snapshot.completed_task_count();
+        let error = snapshot.error_message().map(ToString::to_string);
+        let terminal = snapshot.state.is_terminal();
+        let pos_kind = snapshot.position_kind();
+        let wake_at = match &snapshot.state {
+            glirulus_core::snapshot::WorkflowSnapshotState::InProgress {
+                position: glirulus_core::snapshot::ExecutionPosition::AtSignal { wake_at, .. },
+                ..
+            } => *wake_at,
+            _ => snapshot.delay_wake_at(),
+        };
+        let signal_name = match &snapshot.state {
+            glirulus_core::snapshot::WorkflowSnapshotState::InProgress {
+                position: glirulus_core::snapshot::ExecutionPosition::AtSignal { signal_name, .. },
+                ..
+            } => Some(signal_name.as_str()),
+            _ => None,
+        };
+        let task_priority = i16::from(snapshot.current_task_priority());
+        // Bind the `&[String]` slice directly — sqlx encodes it as `text[]`,
+        // so the intermediate `Vec<&str>` collect (one alloc per save) is
+        // unnecessary.
+        let task_tags = snapshot.current_task_tags();
+        let terminal_status = match SnapshotStatus::from(&snapshot.state) {
+            SnapshotStatus::Failed => "failed",
+            SnapshotStatus::Cancelled => "cancelled",
+            _ => "completed",
+        };
+        let notify_payload = build_task_ready_payload(snapshot);
+
+        // Ship the just-completed output to the sidecar ONLY when flagged
+        // unflushed (set by `mark_task_completed`, cleared post-write). On
+        // position-only saves (pause/cancel/delay/signal parking) the flag is
+        // false, so both binds are NULL and the `task_output` CTE no-ops via
+        // `WHERE $18 IS NOT NULL` — no re-shipping. Safe: an unflagged output
+        // is already in `workflow_tasks`.
+        let output_unflushed = snapshot.output_unflushed;
+        let last_completed_task_id: Option<[u8; 32]> = output_unflushed
+            .then(|| snapshot.last_completed_task_id().map(|t| *t.as_bytes()))
+            .flatten();
+        let last_completed_slice: Option<&[u8]> =
+            last_completed_task_id.as_ref().map(<[u8; 32]>::as_slice);
+        let last_completed_output: Option<bytes::Bytes> = output_unflushed
+            .then(|| {
+                snapshot
+                    .last_completed_task_id()
+                    .and_then(|id| snapshot.get_task_result(&id).map(|r| r.output.clone()))
+            })
+            .flatten();
+        let last_completed_output_slice: Option<&[u8]> = last_completed_output.as_deref();
+
+        // One round-trip via a CTE chain: bump the snapshot version,
+        // append the history row at that version, refresh the
+        // workflow_tasks lifecycle, and queue the wakeup NOTIFY — all
+        // in one statement. Sibling DML CTEs in PG always run; the
+        // gates (`WHERE $task_id IS NOT NULL`, `WHERE $terminal`,
+        // `WHERE $notify IS NOT NULL`) make zero-row branches cheap
+        // no-ops without conditional Rust string building.
+        //
+        // The trailing `SELECT history_version FROM snap` is needed for
+        // the CTE chain to be a valid statement, but the value is not
+        // read on the caller side. `.execute()` skips PgRow allocation
+        // on the Rust side while still driving the full CTE on PG.
+        let query = "
+            WITH snap AS (
+                INSERT INTO sayiir_workflow_snapshots
+                    (instance_id, status, definition_hash, current_task_id,
+                     completed_task_count, error, position_kind, delay_wake_at,
+                     trace_parent, task_priority, task_tags, signal_name, data_hash,
+                     completed_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $8, $9, $10, $11, $12, $22, $13,
+                        CASE WHEN $7 THEN now() ELSE NULL END, now())
+                ON CONFLICT (instance_id) DO UPDATE SET
+                    status = $2,
+                    definition_hash = $3,
+                    current_task_id = $4,
+                    completed_task_count = $5,
+                    error = $6,
+                    position_kind = $8,
+                    delay_wake_at = $9,
+                    trace_parent = $10,
+                    task_priority = $11,
+                    task_tags = $12,
+                    signal_name = $22,
+                    data_hash = $13,
+                    history_version = sayiir_workflow_snapshots.history_version + 1,
+                    completed_at = CASE WHEN $7 THEN now() ELSE sayiir_workflow_snapshots.completed_at END,
+                    updated_at = now()
+                WHERE NOT $21 AND (sayiir_workflow_snapshots.status NOT IN ('Completed', 'Failed', 'Cancelled')
+                    OR ($20 AND sayiir_workflow_snapshots.status = 'Failed' AND sayiir_workflow_snapshots.definition_hash = $3))
+                RETURNING history_version
+            ),
+            hist AS (
+                INSERT INTO sayiir_workflow_snapshot_history
+                    (instance_id, version, status, current_task_id, data, data_hash)
+                SELECT $1, snap.history_version, $2, $4, $14, $13
+                FROM snap
+                RETURNING 1
+            ),
+            task_active AS (
+                INSERT INTO sayiir_workflow_tasks (instance_id, task_id, status, started_at)
+                SELECT $1, $4, 'active', now()
+                WHERE $4 IS NOT NULL AND NOT $7 AND EXISTS (SELECT 1 FROM snap)
+                  -- Skip when the just-completed task IS the current task
+                  -- (final task in a chain has next=None, so position stays
+                  -- on it and current_task_id == last_completed_task_id).
+                  -- The task_output CTE below already UPSERTs that row;
+                  -- this CTE doing it too trips PG`s rule that ON CONFLICT
+                  -- DO UPDATE cannot affect a row twice in one statement.
+                  AND $4 IS DISTINCT FROM $18
+                ON CONFLICT (instance_id, task_id) DO UPDATE SET
+                    status = CASE
+                        WHEN sayiir_workflow_tasks.status = 'completed' THEN sayiir_workflow_tasks.status
+                        ELSE 'active'
+                    END,
+                    started_at = COALESCE(sayiir_workflow_tasks.started_at, now())
+                RETURNING 1
+            ),
+            task_terminal AS (
+                UPDATE sayiir_workflow_tasks
+                SET status = $15, completed_at = now(), error = $6
+                WHERE instance_id = $1 AND status = 'active' AND $7 AND EXISTS (SELECT 1 FROM snap)
+                RETURNING 1
+            ),
+            task_output AS (
+                INSERT INTO sayiir_workflow_tasks
+                    (instance_id, task_id, status, completed_at, output)
+                SELECT $1, $18, 'completed', now(), $19
+                WHERE $18 IS NOT NULL AND EXISTS (SELECT 1 FROM snap)
+                ON CONFLICT (instance_id, task_id) DO UPDATE SET
+                    status = 'completed',
+                    completed_at = now(),
+                    error = NULL,
+                    output = EXCLUDED.output
+                WHERE sayiir_workflow_tasks.output IS NULL
+                   OR sayiir_workflow_tasks.output IS DISTINCT FROM EXCLUDED.output
+                RETURNING 1
+            )
+            -- pg_notify lives in the outer SELECT (not a sibling CTE)
+            -- because PG's optimizer prunes unreferenced non-DML CTEs.
+            -- `WITH notify AS (SELECT pg_notify(...) WHERE ...)` without
+            -- a reference from the outer query is silently dropped and
+            -- the wake never fires; the `wait_for_wakeup_*` integration
+            -- tests catch that regression. CASE keeps the conditional
+            -- behaviour — `pg_notify` is only evaluated when the
+            -- payload is non-NULL because CASE short-circuits its arms.
+            SELECT history_version,
+                   CASE WHEN $17 IS NOT NULL THEN pg_notify($16, $17) END
+            FROM snap
+        ";
+
+        let write = sqlx::query(query)
+            .bind(&*snapshot.instance_id) // $1
+            .bind(status) // $2
+            .bind(snapshot.definition_hash.as_bytes().as_slice()) // $3
+            .bind(task_id) // $4
+            .bind(task_count) // $5
+            .bind(&error) // $6
+            .bind(terminal) // $7
+            .bind(pos_kind) // $8
+            .bind(wake_at) // $9
+            .bind(snapshot.trace_parent.as_deref()) // $10
+            .bind(task_priority) // $11
+            .bind(task_tags) // $12
+            .bind(data_hash.as_slice()) // $13
+            .bind(&data) // $14
+            .bind(terminal_status) // $15
+            .bind(TASK_READY_CHANNEL) // $16
+            .bind(notify_payload.as_deref()) // $17
+            .bind(last_completed_slice) // $18
+            .bind(last_completed_output_slice) // $19
+            .bind(restart_failed) // $20
+            .bind(create_only) // $21
+            .bind(signal_name); // $22
+        let changed = match connection {
+            Some(connection) => write.execute(connection).await,
+            None => write.execute(&self.pool).await,
+        }
+        .map_err(PgError)?;
+        if restart_failed && changed.rows_affected() == 0 {
+            return Err(BackendError::Backend(
+                "failed snapshot cannot be restarted".into(),
+            ));
+        }
+        // The last completed output (if any) is now durable in
+        // `workflow_tasks`; clear the marker so a later save of this same
+        // in-memory snapshot binds NULL instead of re-shipping the bytes.
+        snapshot.output_unflushed = false;
+        Ok(())
     }
 }

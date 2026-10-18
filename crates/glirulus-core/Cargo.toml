@@ -1,6 +1,6 @@
 # Based on the Cargo-normalized Sayiir 1.0.0 archive manifest.
-# Glirulus baseline changes only repair standalone workspace packaging.
-# The archived authoring manifest is retained in Cargo.toml.orig.
+# Glirulus renames the package and its local sibling edges; upstream archive
+# identities and fork attribution are recorded in NOTICE.
 #
 # ORIGINAL CARGO NORMALIZATION NOTICE:
 #
@@ -11,12 +11,12 @@
 #
 # If you are reading this file be aware that the original Cargo.toml
 # will likely look very different (and much more reasonable).
-# See Cargo.toml.orig for the original contents.
+# The exact upstream archive contains its original Cargo.toml.orig.
 
 [package]
 edition = "2024"
-name = "sayiir-core"
-version = "1.0.0"
+name = "glirulus-core"
+version = "1.0.0-glirulus.1"
 authors = ["Yacine Bouraoui <ybsoft2011@live.com>"]
 build = false
 autolib = false
@@ -24,10 +24,11 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Core types and traits for the Sayiir durable workflow engine"
+description = "Core types and traits for the Glirulus durable workflow engine"
 homepage = "https://github.com/superions/glirulus"
-documentation = "https://docs.rs/sayiir-core"
+documentation = "https://docs.rs/glirulus-core"
 readme = "README.md"
+include = ["src/**", "README.md", "LICENSE", "NOTICE"]
 keywords = [
     "workflow",
     "orchestration",
@@ -52,7 +53,7 @@ rkyv = [
 tokio = ["dep:tokio"]
 
 [lib]
-name = "sayiir_core"
+name = "glirulus_core"
 path = "src/lib.rs"
 
 [dependencies.bytecheck]

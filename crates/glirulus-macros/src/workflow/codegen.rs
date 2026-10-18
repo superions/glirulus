@@ -57,7 +57,7 @@ pub fn collect_route_aliases(steps: &[WorkflowStep]) -> Vec<(&Ident, String)> {
             ..
         } = step
         {
-            // NB: must match `sayiir_core::workflow::key_fn_id` convention
+            // NB: must match `glirulus_core::workflow::key_fn_id` convention
             aliases.push((key_fn, format!("{id}::key_fn")));
             // Recurse into branch arms (they could contain nested route)
             for (_key, branch_steps) in branches {
@@ -122,7 +122,7 @@ pub fn gen_step_chain(steps: &[WorkflowStep]) -> syn::Result<TokenStream> {
                 match join_step {
                     WorkflowStep::TaskRef { struct_name, .. } => {
                         fork_tokens.extend(quote! {
-                            .join_registered::<<#struct_name as ::sayiir_core::task::CoreTask>::Output>(
+                            .join_registered::<<#struct_name as ::glirulus_core::task::CoreTask>::Output>(
                                 #struct_name::task_id()
                             )
                         });
@@ -140,7 +140,7 @@ pub fn gen_step_chain(steps: &[WorkflowStep]) -> syn::Result<TokenStream> {
             }
             WorkflowStep::TaskRef { struct_name, .. } => {
                 tokens.extend(quote! {
-                    .then_registered::<<#struct_name as ::sayiir_core::task::CoreTask>::Output>(
+                    .then_registered::<<#struct_name as ::glirulus_core::task::CoreTask>::Output>(
                         #struct_name::task_id()
                     )
                 });
@@ -194,14 +194,14 @@ pub fn gen_step_chain(steps: &[WorkflowStep]) -> syn::Result<TokenStream> {
             } => {
                 let on_max_expr = match on_max {
                     Some(ident) if ident == "exit_with_last" => quote! {
-                        ::sayiir_core::MaxIterationsPolicy::ExitWithLast
+                        ::glirulus_core::MaxIterationsPolicy::ExitWithLast
                     },
                     _ => quote! {
-                        ::sayiir_core::MaxIterationsPolicy::Fail
+                        ::glirulus_core::MaxIterationsPolicy::Fail
                     },
                 };
                 tokens.extend(quote! {
-                    .loop_task_registered::<<<#body as ::sayiir_core::task::CoreTask>::Output as ::sayiir_core::loop_result::LoopOutput>::Inner>(
+                    .loop_task_registered::<<<#body as ::glirulus_core::task::CoreTask>::Output as ::glirulus_core::loop_result::LoopOutput>::Inner>(
                         #body::task_id(),
                         #max_iterations,
                         #on_max_expr,
@@ -244,7 +244,7 @@ pub fn gen_step_chain(steps: &[WorkflowStep]) -> syn::Result<TokenStream> {
                                 .as_ref()
                                 .expect("BranchArmKey::Variant requires key_type");
                             quote! {
-                                <#ty as ::sayiir_core::branch_key::BranchKey>::as_key(&#ty::#variant)
+                                <#ty as ::glirulus_core::branch_key::BranchKey>::as_key(&#ty::#variant)
                             }
                         }
                     };
@@ -313,7 +313,7 @@ fn infer_branch_output_type(
         .ok_or_else(|| err(span, "branch must have at least one task"))?;
     match last_step {
         WorkflowStep::TaskRef { struct_name, .. } => Ok(quote! {
-            <#struct_name as ::sayiir_core::task::CoreTask>::Output
+            <#struct_name as ::glirulus_core::task::CoreTask>::Output
         }),
         _ => Err(err(
             span,

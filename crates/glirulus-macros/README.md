@@ -1,18 +1,32 @@
-# sayiir-macros
+# glirulus-macros
 
-Procedural macros for the [Sayiir](https://github.com/sayiir/sayiir) durable workflow engine.
+Procedural macros for the [Glirulus](https://github.com/superions/glirulus) durable workflow engine.
 
 ## Overview
 
-Provides two macros that eliminate boilerplate when defining workflows:
+Provides three macros that eliminate boilerplate when defining workflows:
 
 - **`#[task]`** — Transforms an async function into a `CoreTask` struct with automatic registration, metadata, and dependency injection.
 - **`workflow!`** — Builds a workflow pipeline with a concise DSL that desugars to `WorkflowBuilder` method calls.
+- **`BranchKey`** — Derives routing keys for fieldless enum variants.
+
+Generated code refers directly to `glirulus_core`; the default workflow codec
+also refers directly to `glirulus_runtime`. Declare both packages in the consuming
+crate; depending on Macros alone does not make those paths available:
+
+```toml
+[dependencies]
+glirulus-core = "=1.0.0-glirulus.1"
+glirulus-runtime = "=1.0.0-glirulus.1"
+```
+
+Runtime's default `macros` feature reexports these macros. The examples below
+illustrate the DSL with application-defined types and functions.
 
 ## `#[task]`
 
 ```rust
-use sayiir_macros::task;
+use glirulus_runtime::task;
 
 #[task(timeout = "30s", retries = 3, backoff = "100ms")]
 async fn charge(order: Order, #[inject] stripe: Arc<Stripe>) -> Result<Receipt, BoxError> {
@@ -40,11 +54,13 @@ async fn charge(order: Order, #[inject] stripe: Arc<Stripe>) -> Result<Receipt, 
 
 ### Generated Code
 
-The macro generates a PascalCase struct (e.g., `fn charge` → `struct Charge`) with `new()`, `task_id()`, `metadata()`, `register()`, and a `CoreTask` trait implementation. The original function is preserved for direct use and testing.
+The macro generates a PascalCase struct with a `Task` suffix (e.g., `fn charge` → `struct ChargeTask`) with `new()`, `task_id()`, `metadata()`, `register()`, and a `CoreTask` trait implementation. The original function is preserved for direct use and testing.
 
 ## `workflow!`
 
 ```rust
+use glirulus_runtime::workflow;
+
 let workflow = workflow! {
     name: "order-process",
     steps: [
@@ -80,8 +96,9 @@ let workflow = workflow! {
 
 ## Documentation
 
-Full API docs are available on [docs.rs](https://docs.rs/sayiir-macros).
+Full API docs are available on [docs.rs](https://docs.rs/glirulus-macros).
 
 ## License
 
-MIT
+The original MIT grant and fork attribution are in [LICENSE](LICENSE).
+[NOTICE](NOTICE) identifies the Sayiir 1.0.0 source archive.

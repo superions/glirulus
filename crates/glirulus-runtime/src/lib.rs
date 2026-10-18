@@ -16,13 +16,15 @@
 
 //! Workflow runtime for executing durable workflows.
 //!
-//! This crate provides the execution engine that drives [`sayiir_core`] workflows
+//! This crate provides the execution engine that drives [`glirulus_core`] workflows
 //! to completion. It re-exports the core crate, persistence layer, and proc-macros
-//! so most users only need a single dependency:
+//! for convenient access. Macro consumers also declare Core because generated
+//! code refers directly to its public crate path:
 //!
 //! ```toml
 //! [dependencies]
-//! sayiir-runtime = "0.1"
+//! glirulus-core = "=1.0.0-glirulus.1"
+//! glirulus-runtime = "=1.0.0-glirulus.1"
 //! ```
 //!
 //! # Execution Strategies
@@ -36,8 +38,8 @@
 //! # Quick Example
 //!
 //! ```rust,no_run
-//! use sayiir_runtime::{CheckpointingRunner, WorkflowRunner, workflow, task};
-//! use sayiir_runtime::persistence::InMemoryBackend;
+//! use glirulus_runtime::{CheckpointingRunner, WorkflowRunner, workflow, task};
+//! use glirulus_runtime::persistence::InMemoryBackend;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let backend = InMemoryBackend::new();
@@ -53,10 +55,9 @@
 //!
 //! This crate re-exports key items for convenience:
 //!
-//! - [`sayiir_core`] — via `sayiir_runtime::persistence` (through `sayiir_persistence`)
-//! - [`sayiir_persistence`] — as [`persistence`]
-//! - [`task`] and [`workflow!`] — from `sayiir-macros`
-//! - [`task_context!`] — context macro from `sayiir-core`
+//! - [`glirulus_persistence`] — as [`persistence`]
+//! - [`task`] and [`workflow!`] — from `glirulus-macros`
+//! - [`task_context!`] — context macro from `glirulus-core`
 //!
 //! # Cargo Features
 //!
@@ -64,7 +65,7 @@
 //! |---------|---------|-------------|
 //! | `json` | **yes** | JSON serialization codec ([`serde_json`]) |
 //! | `rkyv` | **yes** | Zero-copy binary codec ([`rkyv`]) |
-//! | `macros` | **yes** | Proc-macro re-exports (`#[task]`, `workflow!`) from `sayiir-macros` |
+//! | `macros` | **yes** | Proc-macro re-exports (`#[task]`, `workflow!`) from `glirulus-macros` |
 //! | `otel` | no | OpenTelemetry integration — W3C trace context propagation across workers, OTLP span export, and [`trace_context::init_tracing`] / [`trace_context::shutdown_tracing`] helpers |
 //!
 //! At least one of `json` or `rkyv` must be enabled (enforced at compile time).
@@ -75,7 +76,7 @@
 //! `OTEL_SERVICE_NAME`, and `RUST_LOG` environment variables.
 //!
 //! For the full README with architecture diagrams and detailed configuration,
-//! see the [crate README](https://crates.io/crates/sayiir-runtime).
+//! see the [crate README](https://crates.io/crates/glirulus-runtime).
 
 #[cfg(not(any(feature = "json", feature = "rkyv")))]
 compile_error!(
@@ -105,14 +106,14 @@ pub use runner::WorkflowRunner;
 pub use runner::distributed::CheckpointingRunner;
 pub use runner::in_process::InProcessRunner;
 pub use worker::{
-    ExternalTaskExecutor, ExternalWorkflow, PooledWorker, PooledWorkerBuilder, WorkerHandle,
-    WorkflowIndex, WorkflowRegistry,
+    ExternalTaskExecutor, ExternalWorkflow, LiveWorkflowIndex, PooledWorker, PooledWorkerBuilder,
+    WorkerHandle, WorkflowIndex, WorkflowRegistry,
 };
 
-pub use sayiir_core::branch_key::BranchKey;
-pub use sayiir_core::deps::{Deps, DepsBuilder, DepsInjectable, MissingDep};
-pub use sayiir_core::task_context;
-pub use sayiir_core::workflow::ConflictPolicy;
+pub use glirulus_core::branch_key::BranchKey;
+pub use glirulus_core::deps::{Deps, DepsBuilder, DepsInjectable, MissingDep};
+pub use glirulus_core::task_context;
+pub use glirulus_core::workflow::ConflictPolicy;
 #[cfg(feature = "macros")]
-pub use sayiir_macros::{BranchKey, task, workflow};
-pub use sayiir_persistence as persistence;
+pub use glirulus_macros::{BranchKey, task, workflow};
+pub use glirulus_persistence as persistence;

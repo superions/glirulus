@@ -12,12 +12,12 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use sayiir_core::codec::sealed;
-use sayiir_core::codec::{Codec, EnvelopeCodec};
-use sayiir_core::snapshot::{SignalKind, SignalRequest};
-use sayiir_core::task::TaskIdentifier;
-use sayiir_core::workflow::{ConflictPolicy, Workflow, WorkflowStatus};
-use sayiir_persistence::{SignalStore, SnapshotStore, TaskResultStore};
+use glirulus_core::codec::sealed;
+use glirulus_core::codec::{Codec, EnvelopeCodec};
+use glirulus_core::snapshot::{SignalKind, SignalRequest};
+use glirulus_core::task::TaskIdentifier;
+use glirulus_core::workflow::{ConflictPolicy, Workflow, WorkflowStatus};
+use glirulus_persistence::{SignalStore, SnapshotStore, TaskResultStore};
 
 use crate::error::RuntimeError;
 use crate::{PrepareRunOutcome, check_existing_instance, prepare_run};
@@ -32,9 +32,9 @@ use crate::{PrepareRunOutcome, check_existing_instance, prepare_run};
 /// # Example
 ///
 /// ```rust,no_run
-/// use sayiir_runtime::WorkflowClient;
-/// use sayiir_runtime::persistence::InMemoryBackend;
-/// use sayiir_core::workflow::ConflictPolicy;
+/// use glirulus_runtime::WorkflowClient;
+/// use glirulus_runtime::persistence::InMemoryBackend;
+/// use glirulus_core::workflow::ConflictPolicy;
 ///
 /// let backend = InMemoryBackend::new();
 /// let client = WorkflowClient::new(backend)
@@ -252,7 +252,7 @@ where
     ) -> Result<Option<Bytes>, RuntimeError> {
         Ok(self
             .backend
-            .load_task_result(instance_id, &sayiir_core::TaskId::from(task_id))
+            .load_task_result(instance_id, &glirulus_core::TaskId::from(task_id))
             .await?)
     }
 

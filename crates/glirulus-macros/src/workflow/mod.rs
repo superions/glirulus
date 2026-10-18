@@ -53,21 +53,21 @@ fn gen_check_block(deps_expr: Option<&syn::Expr>, names: &[&syn::Ident]) -> Toke
     let stmts = names.iter().map(|name| {
         quote::quote! {
             for __m in #name::verify_deps(__deps) {
-                __build_errors.push(::sayiir_core::error::BuildError::MissingDep {
+                __build_errors.push(::glirulus_core::error::BuildError::MissingDep {
                     task_id: #name::task_id(),
                     type_name: __m.type_name,
                 });
             }
             if __registry.contains(#name::task_id()) {
-                __build_errors.push(::sayiir_core::error::BuildError::RegistryDepsConflict {
+                __build_errors.push(::glirulus_core::error::BuildError::RegistryDepsConflict {
                     task_id: #name::task_id(),
                 });
             }
         }
     });
     quote::quote! {
-        let __deps: &::sayiir_core::deps::Deps = #deps_expr;
-        let mut __build_errors = ::sayiir_core::error::BuildErrors::new();
+        let __deps: &::glirulus_core::deps::Deps = #deps_expr;
+        let mut __build_errors = ::glirulus_core::error::BuildErrors::new();
         #(#stmts)*
         if !__build_errors.is_empty() {
             return ::std::result::Result::Err(__build_errors);
@@ -81,7 +81,7 @@ fn generate(def: &WorkflowDef) -> syn::Result<TokenStream> {
 
     let registry_expr = match &def.registry {
         Some(expr) => quote::quote! { #expr },
-        None => quote::quote! { ::sayiir_core::registry::TaskRegistry::new() },
+        None => quote::quote! { ::glirulus_core::registry::TaskRegistry::new() },
     };
 
     let metadata_expr = match &def.metadata {
@@ -131,19 +131,19 @@ fn generate(def: &WorkflowDef) -> syn::Result<TokenStream> {
     let exhaustiveness_checks = codegen::collect_exhaustiveness_checks(&def.steps);
 
     Ok(quote::quote! {
-        (|| -> ::std::result::Result<_, ::sayiir_core::error::BuildErrors> {
+        (|| -> ::std::result::Result<_, ::glirulus_core::error::BuildErrors> {
             #(#exhaustiveness_checks)*
             let __codec = ::std::sync::Arc::new(#codec);
             let mut __registry = #registry_expr;
             #check_block
             #(#register_stmts)*
             #(#alias_stmts)*
-            let __ctx = ::sayiir_core::context::WorkflowContext::new(
+            let __ctx = ::glirulus_core::context::WorkflowContext::new(
                 #id,
                 __codec.clone(),
                 #metadata_expr,
             );
-            let __wf = ::sayiir_core::builder::WorkflowBuilder::new(__ctx)
+            let __wf = ::glirulus_core::builder::WorkflowBuilder::new(__ctx)
                 .with_existing_registry(__registry)
                 #step_chain
                 .build()?;

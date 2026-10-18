@@ -16,7 +16,7 @@ use crate::codec::LoopDecision;
 /// # Example
 ///
 /// ```rust
-/// use sayiir_core::LoopResult;
+/// use glirulus_core::LoopResult;
 ///
 /// fn refine(draft: String) -> LoopResult<String> {
 ///     if draft.len() > 100 {
@@ -47,7 +47,7 @@ pub enum LoopResult<T> {
 /// the loop body returns `LoopResult<T>` but the loop itself outputs `T`.
 ///
 /// ```rust
-/// use sayiir_core::loop_result::{LoopResult, LoopOutput};
+/// use glirulus_core::loop_result::{LoopResult, LoopOutput};
 ///
 /// // <LoopResult<u32> as LoopOutput>::Inner == u32
 /// fn assert_inner<T: LoopOutput<Inner = u32>>() {}

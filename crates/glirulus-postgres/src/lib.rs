@@ -1,9 +1,9 @@
-//! PostgreSQL persistence backend for the Sayiir workflow engine.
+//! PostgreSQL persistence backend for the Glirulus workflow engine.
 //!
 //! This crate provides [`PostgresBackend`], a production-grade implementation of
-//! [`SnapshotStore`](sayiir_persistence::SnapshotStore),
-//! [`SignalStore`](sayiir_persistence::SignalStore), and
-//! [`TaskClaimStore`](sayiir_persistence::TaskClaimStore) backed by PostgreSQL via
+//! [`SnapshotStore`](glirulus_persistence::SnapshotStore),
+//! [`SignalStore`](glirulus_persistence::SignalStore), and
+//! [`TaskClaimStore`](glirulus_persistence::TaskClaimStore) backed by PostgreSQL via
 //! [`sqlx`].
 //!
 //! # Features
@@ -21,25 +21,32 @@
 //! - **Distributed task claiming**: `TaskClaimStore` with TTL-based claims,
 //!   expired-claim replacement, and soft worker bias.
 //!
+//! # Schema ownership
+//!
+//! Library-managed connections run the included migration chain, including the
+//! additive correlated-event identity and active-signal projection migration.
+//! [`PostgresBackend::from_pool_without_migrations`] performs no DDL; its caller
+//! must supply the matching schema through the application's own migration path.
+//! Existing `sayiir_workflow_*` SQL identities and `sayiir_task_ready` are retained.
+//!
 //! # PostgreSQL version support
 //!
 //! Minimum supported version: **PostgreSQL 13**. The schema uses
 //! `INSERT … ON CONFLICT DO UPDATE` (9.5+) and `ALTER TABLE … ADD COLUMN IF NOT
-//! EXISTS` (9.6+); 13 is the floor because it is the oldest major release still
-//! receiving security patches. Integration tests run against both 13 and 17.
+//! EXISTS` (9.6+). Integration tests exercise PostgreSQL 13 and 18 and reject 12.
 //!
 //! # Quick start
 //!
 //! ```rust,no_run
-//! use sayiir_postgres::PostgresBackend;
-//! use sayiir_runtime::serialization::JsonCodec;
-//! use sayiir_persistence::SnapshotStore;
-//! use sayiir_core::snapshot::WorkflowSnapshot;
+//! use glirulus_postgres::PostgresBackend;
+//! use glirulus_runtime::serialization::JsonCodec;
+//! use glirulus_persistence::SnapshotStore;
+//! use glirulus_core::snapshot::WorkflowSnapshot;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let backend = PostgresBackend::<JsonCodec>::connect("postgresql://localhost/sayiir").await?;
 //!
-//! let mut snapshot = WorkflowSnapshot::new("order-123", sayiir_core::DefinitionHash::from("hash-abc"));
+//! let mut snapshot = WorkflowSnapshot::new("order-123", glirulus_core::DefinitionHash::from("hash-abc"));
 //! backend.save_snapshot(&mut snapshot).await?;
 //!
 //! let loaded = backend.load_snapshot("order-123").await?;
@@ -73,6 +80,7 @@ mod task_result_store;
 mod wakeup;
 
 pub use backend::{PoolOptions, PostgresBackend};
+pub use signal_store::{WaitArbitrator, WaitFuture, WaitResolution};
 pub use wakeup::wakeup_drops_total;
 
 /// Per-instance child tables — i.e. everything that holds rows keyed by

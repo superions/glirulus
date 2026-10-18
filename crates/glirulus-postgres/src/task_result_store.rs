@@ -5,9 +5,9 @@
 //! discarded), the implementation falls back to the most recent `InProgress`
 //! entry in `sayiir_workflow_snapshot_history`.
 
-use sayiir_core::codec::{self, Decoder};
-use sayiir_core::snapshot::WorkflowSnapshot;
-use sayiir_persistence::{BackendError, SnapshotStore, TaskResultStore};
+use glirulus_core::codec::{self, Decoder};
+use glirulus_core::snapshot::WorkflowSnapshot;
+use glirulus_persistence::{BackendError, SnapshotStore, TaskResultStore};
 use sqlx::Row;
 
 use crate::backend::PostgresBackend;
@@ -26,7 +26,7 @@ where
     async fn load_task_result(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
     ) -> Result<Option<bytes::Bytes>, BackendError> {
         let snapshot = self.load_snapshot(instance_id).await?;
 

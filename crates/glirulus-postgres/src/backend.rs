@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sayiir_core::codec::{self, CodecIdentity, Decoder, Encoder};
-use sayiir_core::snapshot::WorkflowSnapshot;
-use sayiir_core::snapshot_format;
-use sayiir_persistence::BackendError;
+use glirulus_core::codec::{self, CodecIdentity, Decoder, Encoder};
+use glirulus_core::snapshot::WorkflowSnapshot;
+use glirulus_core::snapshot_format;
+use glirulus_persistence::BackendError;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
@@ -60,16 +60,16 @@ pub struct PoolOptions {
 
 /// PostgreSQL persistence backend for Sayiir workflows.
 ///
-/// Generic over a [`Codec`](sayiir_core::codec::Codec) that determines how
+/// Generic over a [`Codec`](glirulus_core::codec::Codec) that determines how
 /// snapshots are serialized into the `BYTEA` column. Use `JsonCodec` for
 /// human-readable storage with Postgres-side queryability, or a binary codec
 /// for faster (de)serialization.
 ///
-/// # Example (with `sayiir-runtime` JSON codec)
+/// # Example (with `glirulus-runtime` JSON codec)
 ///
 /// ```rust,no_run
-/// use sayiir_postgres::PostgresBackend;
-/// use sayiir_runtime::serialization::JsonCodec;
+/// use glirulus_postgres::PostgresBackend;
+/// use glirulus_runtime::serialization::JsonCodec;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let backend = PostgresBackend::<JsonCodec>::connect("postgresql://localhost/sayiir").await?;
@@ -81,6 +81,9 @@ pub struct PostgresBackend<C> {
     pub(crate) pool: PgPool,
     pub(crate) codec: C,
     pub(crate) wakeup: Arc<WakeupListener>,
+    pub(crate) eligible_definitions: Arc<std::sync::RwLock<Option<Vec<Vec<u8>>>>>,
+    pub(crate) wait_arbitrator:
+        Arc<std::sync::RwLock<Option<Arc<dyn crate::signal_store::WaitArbitrator>>>>,
 }
 
 impl<C> PostgresBackend<C>
@@ -183,6 +186,45 @@ where
         Self::init(pool).await
     }
 
+    /// Attach a caller-managed pool/schema without running library DDL.
+    pub async fn from_pool_without_migrations(pool: PgPool) -> Result<Self, BackendError> {
+        check_pg_version(&pool).await?;
+        sqlx::query("SELECT instance_id, history_version, definition_hash FROM sayiir_workflow_snapshots LIMIT 0")
+      .execute(&pool)
+      .await
+      .map_err(PgError)?;
+        Ok(Self {
+            wakeup: WakeupListener::spawn(pool.clone()),
+            pool,
+            codec: C::default(),
+            eligible_definitions: Arc::new(std::sync::RwLock::new(None)),
+            wait_arbitrator: Arc::new(std::sync::RwLock::new(None)),
+        })
+    }
+
+    /// Limit polling to locally registered definitions before applying LIMIT.
+    /// None retains the upstream unrestricted behavior; Some(empty) admits none.
+    pub fn set_eligible_definitions(&self, hashes: Vec<glirulus_core::DefinitionHash>) {
+        *self
+            .eligible_definitions
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(
+            hashes
+                .into_iter()
+                .map(|hash| hash.as_bytes().to_vec())
+                .collect(),
+        );
+    }
+
+    /// Install native deadline arbitration. It runs before engine row locks and
+    /// retains its caller's transaction until the engine transition commits.
+    pub fn set_wait_arbitrator(&self, arbitrator: Arc<dyn crate::signal_store::WaitArbitrator>) {
+        *self
+            .wait_arbitrator
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(arbitrator);
+    }
+
     async fn init(pool: PgPool) -> Result<Self, BackendError> {
         check_pg_version(&pool).await?;
 
@@ -199,6 +241,8 @@ where
             pool,
             codec: C::default(),
             wakeup,
+            eligible_definitions: Arc::new(std::sync::RwLock::new(None)),
+            wait_arbitrator: Arc::new(std::sync::RwLock::new(None)),
         })
     }
 }
@@ -208,7 +252,7 @@ where
     C: Encoder + CodecIdentity + codec::sealed::EncodeValue<WorkflowSnapshot>,
 {
     /// Encode a snapshot using the configured codec, wrapped in the durable
-    /// [`snapshot_format`](sayiir_core::snapshot_format) envelope.
+    /// [`snapshot_format`](glirulus_core::snapshot_format) envelope.
     pub(crate) fn encode(&self, snapshot: &WorkflowSnapshot) -> Result<Vec<u8>, BackendError> {
         snapshot_format::encode_framed(&self.codec, snapshot)
             .map_err(|e| BackendError::Serialization(e.to_string()))
@@ -253,7 +297,7 @@ where
     C: Decoder + CodecIdentity + codec::sealed::DecodeValue<WorkflowSnapshot>,
 {
     /// Decode a snapshot from a durable blob: parse the
-    /// [`snapshot_format`](sayiir_core::snapshot_format) envelope, validate the
+    /// [`snapshot_format`](glirulus_core::snapshot_format) envelope, validate the
     /// codec id matches the configured codec, then decode the payload.
     pub(crate) fn decode(&self, data: &[u8]) -> Result<WorkflowSnapshot, BackendError> {
         snapshot_format::decode_framed(&self.codec, data)

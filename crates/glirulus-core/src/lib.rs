@@ -1,6 +1,6 @@
-//! Core types and traits for the Sayiir durable workflow engine.
+//! Core types and traits for the Glirulus durable workflow engine.
 //!
-//! This crate defines the foundational abstractions that every other `sayiir-*`
+//! This crate defines the foundational abstractions that every other `glirulus-*`
 //! crate builds on. It is intentionally **runtime-agnostic** — no persistence,
 //! no execution strategy, just pure workflow modelling.
 //!
@@ -19,23 +19,23 @@
 //! # Architecture
 //!
 //! ```text
-//! sayiir-core          (this crate — types & traits only)
+//! glirulus-core          (this crate — types & traits only)
 //!   ↑
-//! sayiir-persistence   (SnapshotStore, SignalStore, TaskClaimStore)
+//! glirulus-persistence   (SnapshotStore, SignalStore, TaskClaimStore)
 //!   ↑
-//! sayiir-runtime       (CheckpointingRunner, PooledWorker, execution loop)
+//! glirulus-runtime       (CheckpointingRunner, PooledWorker, execution loop)
 //!   ↑
-//! sayiir-macros        (#[task], workflow! — optional convenience)
+//! glirulus-macros        (#[task], workflow! — optional convenience)
 //! ```
 //!
 //! # Quick Example
 //!
 //! ```rust,ignore
-//! use sayiir_core::prelude::*;
+//! use glirulus_core::prelude::*;
 //! use std::sync::Arc;
 //!
 //! // Create a context (codec + workflow ID)
-//! // (Codec is generic — bring your own or use sayiir-runtime's JsonCodec / RkyvCodec)
+//! // (Codec is generic — bring your own or use glirulus-runtime's JsonCodec / RkyvCodec)
 //! let ctx = WorkflowContext::new("order-pipeline", Arc::new(my_codec), Arc::new(()));
 //!
 //! // Build a workflow: validate → charge
@@ -46,7 +46,7 @@
 //! ```
 //!
 //! For the proc-macro experience (`#[task]` + `workflow!`), see
-//! [`sayiir-macros`](https://docs.rs/sayiir-macros).
+//! [`glirulus-macros`](https://docs.rs/glirulus-macros).
 //!
 //! [`Workflow`]: workflow::Workflow
 //! [`SerializableWorkflow`]: workflow::SerializableWorkflow

@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use backon::{BackoffBuilder, ExponentialBuilder};
-use sayiir_persistence::TaskWakeupHint;
+use glirulus_persistence::TaskWakeupHint;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio_util::sync::CancellationToken;
@@ -69,7 +69,7 @@ const RECONNECT_MAX_DELAY: Duration = Duration::from_mins(1);
 /// so NOTIFY is deferred to the transaction's commit (a rollback
 /// correctly drops the wake) without a separate round-trip.
 pub(crate) fn build_task_ready_payload(
-    snapshot: &sayiir_core::snapshot::WorkflowSnapshot,
+    snapshot: &glirulus_core::snapshot::WorkflowSnapshot,
 ) -> Option<String> {
     let task_id = snapshot.current_task_id()?;
     Some(

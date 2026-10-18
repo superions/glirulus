@@ -115,7 +115,7 @@ impl Parse for WorkflowDef {
         let id = id.ok_or_else(|| input.error("missing required field `name`"))?;
         // Default codec to JsonCodec when omitted.
         let codec = codec.unwrap_or_else(|| {
-            syn::parse_str("::sayiir_runtime::serialization::JsonCodec")
+            syn::parse_str("::glirulus_runtime::serialization::JsonCodec")
                 .expect("hardcoded path is valid")
         });
         let steps = steps.ok_or_else(|| input.error("missing required field `steps`"))?;

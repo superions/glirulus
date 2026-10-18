@@ -7,7 +7,8 @@ usage() {
 Usage: scripts/check.sh MODE [--timeout-seconds SECONDS]
 
   build     One locked workspace library build (baseline buildability).
-  tests     Workspace library tests and doctests once; public macro consumer if present.
+  tests     Workspace library tests and doctests once, plus the public macro consumer.
+  macros    The public macro consumer alone (targeted recovery).
   features  Default, no-default and all-feature library compilation, plus the
             isolated Core/Tokio and Runtime/JSON consumer profiles.
   postgres  Restored PostgreSQL integration target once, using disposable Docker data.
@@ -24,7 +25,7 @@ EOF
 
 mode=${1:-}
 if [[ $mode == -h || $mode == --help ]]; then usage; exit 0; fi
-case "$mode" in build|tests|features|postgres|all) shift ;; *) usage >&2; exit 2 ;; esac
+case "$mode" in build|tests|macros|features|postgres|all) shift ;; *) usage >&2; exit 2 ;; esac
 limit=1200
 if [[ ${1:-} == --timeout-seconds && $# == 2 ]]; then
   limit=$2
@@ -48,15 +49,7 @@ flock -n 9 || { echo 'Another check owns this checkout target directory.' >&2; e
 export CARGO_TARGET_DIR="$target" CARGO_INCREMENTAL=0
 export RUST_TEST_THREADS=${RUST_TEST_THREADS:-2}
 
-# The baseline retains upstream names; the rename needs no second check script.
-if grep -Eq '^name[[:space:]]*=[[:space:]]*"glirulus-core"' crates/glirulus-core/Cargo.toml; then
-  prefix=glirulus
-elif grep -Eq '^name[[:space:]]*=[[:space:]]*"sayiir-core"' crates/glirulus-core/Cargo.toml; then
-  prefix=sayiir
-else
-  echo 'Cannot identify the Core package name.' >&2
-  exit 1
-fi
+prefix=glirulus
 
 active_group=
 postgres_started=0
@@ -124,19 +117,24 @@ tests() {
   # --lib and --doc deliberately exclude the separately owned PostgreSQL target.
   run cargo test --locked --workspace --lib
   run cargo test --locked --workspace --doc
-  if [[ -f crates/glirulus-runtime/tests/macros.rs ]]; then
-    run cargo test --locked -p "$prefix-runtime" --test macros --features json,macros
-  fi
+  macros
+}
+
+macros() {
+  run cargo test --locked -p "$prefix-runtime" --test macros --features json,macros
 }
 
 features() {
   run cargo check --locked --workspace --lib
-  run cargo check --locked --workspace --lib --no-default-features
+  # Runtime intentionally requires a codec even when defaults are disabled.
+  run cargo check --locked --workspace --lib --no-default-features --features "$prefix-runtime/json"
   run cargo check --locked --workspace --lib --all-features
   # Separate package-specific invocations are essential: workspace/dev-dependency
   # feature unification would otherwise hide missing reduced-profile imports.
   run cargo check --locked -p "$prefix-core" --lib --no-default-features --features tokio
   run cargo check --locked -p "$prefix-runtime" --lib --no-default-features --features json
+  # Defaults/all-features enable JSON and cannot protect the independent rkyv codec.
+  run cargo check --locked -p "$prefix-runtime" --lib --no-default-features --features rkyv
 }
 
 postgres() {
@@ -150,6 +148,7 @@ postgres() {
 case "$mode" in
   build) run cargo build --locked --workspace --lib ;;
   tests) tests ;;
+  macros) macros ;;
   features) features ;;
   postgres) postgres ;;
   all) tests; features; postgres ;;

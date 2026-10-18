@@ -2,13 +2,13 @@
 //!
 //! Implement this trait on a fieldless enum to constrain the routing keys
 //! that a `route` node can produce. The derive macro
-//! `BranchKey` (from `sayiir-macros`) generates the implementation
+//! `BranchKey` (from `glirulus-macros`) generates the implementation
 //! automatically.
 //!
 //! # Example
 //!
 //! ```rust
-//! use sayiir_core::branch_key::BranchKey;
+//! use glirulus_core::branch_key::BranchKey;
 //!
 //! enum Intent {
 //!     Billing,

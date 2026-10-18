@@ -1,0 +1,59 @@
+Glirulus runtime — source provenance and modifications
+
+Original package: sayiir-runtime 1.0.0
+Upstream: https://github.com/sayiir/sayiir
+Recorded source commit: 7e6318225398ad7a418efb866156d2cc327ee43f
+Archive: https://static.crates.io/crates/sayiir-runtime/sayiir-runtime-1.0.0.crate
+Archive SHA-256: fb257d3c08a51588607ea53dba9d6cdd0724c3ce5ff814f1ba35c39e5f471eb3
+
+License: MIT; Copyright (c) 2026 Sayiir.
+The complete original grant is retained in LICENSE.
+Glirulus modifications: Copyright (c) 2026 Daniel Scharf, under MIT.
+
+Generic source handoff: Myoxus revision
+fd7353183f4f1a566394c42bfe0bbef0b942a350, from
+server/crates/infrastructure/src/workflow_runtime/extensions/sayiir-runtime/.
+The complete source tree is retained with Rust crate identity changes and the
+additional optional-codec correction described below.
+
+Generic local modifications (Myoxus contributors, 2026):
+
+- PostgreSQL: attach an existing pool without running library migrations;
+  filter registered definition hashes before the polling limit; admit a
+  snapshot without rewinding a concurrent admission; participate in a caller's
+  transaction for snapshot creation/restart and signal admission. Snapshot
+  sidecar updates follow successful snapshot admission. Correlated events retain
+  their consumed identity and advance the snapshot in the same transaction.
+  A caller-supplied native wait arbiter runs before snapshot locks, using that
+  transaction for absolute deadlines and already-committed acceptance. Existing
+  pooled polling advances due/buffered waits using the current signal projection.
+- Runtime: register definitions in a live shared index for the existing
+  PooledWorker/external executor; expose worker completion and bounded shutdown
+  with task reaping; respect zero retries and persist terminal exhausted
+  external-task failures instead of leaving them executable. Polling and hints
+  also admit checkpointed current tasks for claimed continuation, using retained
+  output and existing completion helpers without calling the task executor again.
+  Signal consumers preserve a backend's already-advanced checkpoint. External
+  JSON branch selection retains its full input and technical routingKey; only
+  the selected declared child chain participates in continuation/completion.
+  An explicit routingEmpty projection completes an authored empty branch without
+  dispatching a synthetic task; it cannot suppress a declared nonempty child.
+  External dispatch resolves declared Branch selector names omitted by the
+  upstream task index; native task dispatch keeps its indexed contract.
+  Persisted advancement into another signal/delay head parks that control under
+  the normal dispatch claim, sharing existing wait arbitration and event draining
+  rather than invoking a nonexistent external task body.
+
+Glirulus additionally changes package/library identities and sibling dependency
+edges, preserves inherited tests, and carries standalone workspace packaging.
+A consuming macro test protects the renamed public code generation paths.
+
+The original SQL object names and notification channel remain unchanged.
+Application business types, authorization, native receipts, native wait
+arbitration and application migration ledgers remain outside these libraries.
+
+Additional Glirulus qualification correction: gate the JSON loop-envelope
+fallback on the optional json feature. A rkyv-only consumer retains binary loop
+envelopes and receives an explicit error for JSON envelopes, without linking
+serde_json or implicitly enabling the JSON codec. Default/JSON behavior and
+binary loop-envelope decoding remain unchanged.

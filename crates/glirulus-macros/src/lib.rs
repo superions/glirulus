@@ -1,7 +1,7 @@
 #![deny(missing_docs)]
-//! Procedural macros for the Sayiir durable workflow engine.
+//! Procedural macros for the Glirulus durable workflow engine.
 //!
-//! Provides two macros that eliminate boilerplate when defining workflows:
+//! Provides three macros that eliminate boilerplate when defining workflows:
 //!
 //! - **`#[task]`** — Transforms an async function into a `CoreTask` struct with
 //!   automatic registration, metadata, and dependency injection.
@@ -9,10 +9,15 @@
 //! - **`workflow!`** — Builds a workflow pipeline with a concise DSL that desugars
 //!   to `WorkflowBuilder` method calls.
 //!
+//! - **`BranchKey`** — Derives string routing keys for fieldless enum variants.
+//!
+//! Generated paths require direct `glirulus_core` and, for the default JSON
+//! workflow codec, `glirulus_runtime` dependencies in the consuming crate.
+//!
 //! # Quick Example
 //!
 //! ```rust,ignore
-//! use sayiir_macros::task;
+//! use glirulus_macros::task;
 //!
 //! #[task(timeout = "30s", retries = 3, backoff = "100ms")]
 //! async fn charge(order: Order, #[inject] stripe: Arc<Stripe>) -> Result<Receipt, BoxError> {
@@ -103,7 +108,7 @@ pub fn task(
 /// # Example
 ///
 /// ```rust,ignore
-/// use sayiir_macros::BranchKey;
+/// use glirulus_macros::BranchKey;
 ///
 /// #[derive(BranchKey)]
 /// enum Intent {

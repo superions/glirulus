@@ -5,11 +5,11 @@
 
 use crate::backend::{BackendError, SignalStore, SnapshotStore, TaskClaimStore, TaskResultStore};
 use chrono::{Duration, Utc};
-use sayiir_core::snapshot::{
+use glirulus_core::snapshot::{
     ExecutionPosition, PauseRequest, SignalKind, SignalRequest, TaskResult, WorkflowSnapshot,
     WorkflowSnapshotState,
 };
-use sayiir_core::task_claim::{AvailableTask, TaskClaim};
+use glirulus_core::task_claim::{AvailableTask, TaskClaim};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
@@ -21,7 +21,7 @@ type SignalsByInstance = HashMap<Arc<str>, HashMap<SignalKind, SignalRequest>>;
 /// re-allocating an `Arc<str>` just to satisfy the key type.
 type EventsBySignal = HashMap<Arc<str>, HashMap<String, VecDeque<bytes::Bytes>>>;
 /// Cached task results for terminal workflows, indexed by instance.
-type TaskResultsByInstance = HashMap<Arc<str>, HashMap<sayiir_core::TaskId, TaskResult>>;
+type TaskResultsByInstance = HashMap<Arc<str>, HashMap<glirulus_core::TaskId, TaskResult>>;
 
 /// In-memory backend that stores snapshots in a HashMap.
 ///
@@ -46,7 +46,7 @@ impl InMemoryBackend {
         Default::default()
     }
 
-    fn claim_key(instance_id: &str, task_id: &sayiir_core::TaskId) -> String {
+    fn claim_key(instance_id: &str, task_id: &glirulus_core::TaskId) -> String {
         // TaskId Display = 64-char hex.
         format!("{}:{}", instance_id, task_id)
     }
@@ -88,7 +88,7 @@ impl SnapshotStore for InMemoryBackend {
     async fn save_task_result(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         output: bytes::Bytes,
     ) -> Result<(), BackendError> {
         let mut snapshots = self.snapshots.write().map_err(Self::lock_error)?;
@@ -135,7 +135,7 @@ impl TaskResultStore for InMemoryBackend {
     async fn load_task_result(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
     ) -> Result<Option<bytes::Bytes>, BackendError> {
         let snapshots = self.snapshots.read().map_err(Self::lock_error)?;
         let snapshot = snapshots
@@ -277,7 +277,7 @@ impl SignalStore for InMemoryBackend {
     async fn check_and_cancel(
         &self,
         instance_id: &str,
-        interrupted_at_task: Option<sayiir_core::TaskId>,
+        interrupted_at_task: Option<glirulus_core::TaskId>,
     ) -> Result<bool, BackendError> {
         let request = {
             let signals = self.signals.read().map_err(Self::lock_error)?;
@@ -390,7 +390,7 @@ impl TaskClaimStore for InMemoryBackend {
     async fn claim_task(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
         ttl: Option<Duration>,
     ) -> Result<Option<TaskClaim>, BackendError> {
@@ -415,7 +415,7 @@ impl TaskClaimStore for InMemoryBackend {
     async fn release_task_claim(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
     ) -> Result<(), BackendError> {
         let key = Self::claim_key(instance_id, task_id);
@@ -441,7 +441,7 @@ impl TaskClaimStore for InMemoryBackend {
     async fn extend_task_claim(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
         additional_duration: Duration,
     ) -> Result<(), BackendError> {
@@ -487,12 +487,12 @@ impl TaskClaimStore for InMemoryBackend {
         }
 
         // Collect delay-expired workflows that need position advancement
-        let mut delay_advances: Vec<(Arc<str>, sayiir_core::TaskId)> = Vec::new();
-        let mut delay_completions: Vec<(Arc<str>, sayiir_core::TaskId)> = Vec::new();
+        let mut delay_advances: Vec<(Arc<str>, glirulus_core::TaskId)> = Vec::new();
+        let mut delay_completions: Vec<(Arc<str>, glirulus_core::TaskId)> = Vec::new();
         // Signal-related advancements: (instance_id, signal_name, next_task_id_or_none)
-        let mut signal_advances: Vec<(Arc<str>, String, Option<sayiir_core::TaskId>)> = Vec::new();
+        let mut signal_advances: Vec<(Arc<str>, String, Option<glirulus_core::TaskId>)> = Vec::new();
         // Signal timeout expirations: (instance_id, signal_id, next_task_id_or_none)
-        let mut signal_timeout_advances: Vec<(Arc<str>, String, Option<sayiir_core::TaskId>)> =
+        let mut signal_timeout_advances: Vec<(Arc<str>, String, Option<glirulus_core::TaskId>)> =
             Vec::new();
 
         {
@@ -609,7 +609,7 @@ impl TaskClaimStore for InMemoryBackend {
                     if let Some(snapshot) = snapshots.get_mut(instance_id) {
                         // Store signal payload as a task result so the next step can use it
                         snapshot.mark_task_completed(
-                            sayiir_core::TaskId::from(signal_name.as_str()),
+                            glirulus_core::TaskId::from(signal_name.as_str()),
                             payload,
                         );
                         if let Some(next_id) = next_task_id {
@@ -617,7 +617,7 @@ impl TaskClaimStore for InMemoryBackend {
                                 .update_position(ExecutionPosition::AtTask { task_id: *next_id });
                         } else {
                             let output = snapshot
-                                .get_task_result_bytes(&sayiir_core::TaskId::from(
+                                .get_task_result_bytes(&glirulus_core::TaskId::from(
                                     signal_name.as_str(),
                                 ))
                                 .unwrap_or_default();
@@ -630,7 +630,7 @@ impl TaskClaimStore for InMemoryBackend {
             for (instance_id, signal_name, next_task_id) in &signal_timeout_advances {
                 if let Some(snapshot) = snapshots.get_mut(instance_id) {
                     snapshot.mark_task_completed(
-                        sayiir_core::TaskId::from(signal_name.as_str()),
+                        glirulus_core::TaskId::from(signal_name.as_str()),
                         bytes::Bytes::new(),
                     );
                     if let Some(next_id) = next_task_id {
@@ -752,7 +752,7 @@ impl TaskClaimStore for InMemoryBackend {
 mod tests {
     use super::*;
     use crate::backend::SignalStore;
-    use sayiir_core::snapshot::SignalKind;
+    use glirulus_core::snapshot::SignalKind;
 
     #[tokio::test]
     async fn test_save_and_load() {
@@ -813,7 +813,7 @@ mod tests {
         let claim = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(300)),
             )
@@ -823,7 +823,7 @@ mod tests {
         assert!(claim.is_some());
         let claim = claim.unwrap();
         assert_eq!(&*claim.instance_id, "workflow-1");
-        assert_eq!(claim.task_id, sayiir_core::TaskId::from("task-1"));
+        assert_eq!(claim.task_id, glirulus_core::TaskId::from("task-1"));
         assert_eq!(claim.worker_id, "worker-1");
         assert!(claim.expires_at.is_some());
     }
@@ -836,7 +836,7 @@ mod tests {
         let claim1 = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(300)),
             )
@@ -848,7 +848,7 @@ mod tests {
         let claim2 = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-2",
                 Some(Duration::seconds(300)),
             )
@@ -865,7 +865,7 @@ mod tests {
         let claim1 = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(0)),
             )
@@ -877,7 +877,7 @@ mod tests {
         let claim2 = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-2",
                 Some(Duration::seconds(300)),
             )
@@ -895,7 +895,7 @@ mod tests {
         let claim = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 None,
             )
@@ -916,7 +916,7 @@ mod tests {
         backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(300)),
             )
@@ -927,7 +927,7 @@ mod tests {
         let result = backend
             .release_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
             )
             .await;
@@ -937,7 +937,7 @@ mod tests {
         let claim = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-2",
                 Some(Duration::seconds(300)),
             )
@@ -954,7 +954,7 @@ mod tests {
         backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(300)),
             )
@@ -965,7 +965,7 @@ mod tests {
         let result = backend
             .release_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-2",
             )
             .await;
@@ -979,7 +979,7 @@ mod tests {
         let result = backend
             .release_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
             )
             .await;
@@ -994,7 +994,7 @@ mod tests {
         let claim = backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(10)),
             )
@@ -1007,7 +1007,7 @@ mod tests {
         backend
             .extend_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Duration::seconds(300),
             )
@@ -1016,7 +1016,7 @@ mod tests {
 
         // Verify extension by checking internal state
         let claims = backend.claims.read().unwrap();
-        let key = InMemoryBackend::claim_key("workflow-1", &sayiir_core::TaskId::from("task-1"));
+        let key = InMemoryBackend::claim_key("workflow-1", &glirulus_core::TaskId::from("task-1"));
         let extended_claim = claims.get(&key).unwrap();
         assert!(extended_claim.expires_at.unwrap() > original_expiry);
     }
@@ -1029,7 +1029,7 @@ mod tests {
         backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Some(Duration::seconds(300)),
             )
@@ -1040,7 +1040,7 @@ mod tests {
         let result = backend
             .extend_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-2",
                 Duration::seconds(300),
             )
@@ -1055,7 +1055,7 @@ mod tests {
         let result = backend
             .extend_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Duration::seconds(300),
             )
@@ -1071,7 +1071,7 @@ mod tests {
         backend
             .claim_task(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 None,
             )
@@ -1082,7 +1082,7 @@ mod tests {
         backend
             .extend_task_claim(
                 "workflow-1",
-                &sayiir_core::TaskId::from("task-1"),
+                &glirulus_core::TaskId::from("task-1"),
                 "worker-1",
                 Duration::seconds(300),
             )
@@ -1090,7 +1090,7 @@ mod tests {
             .unwrap();
 
         let claims = backend.claims.read().unwrap();
-        let key = InMemoryBackend::claim_key("workflow-1", &sayiir_core::TaskId::from("task-1"));
+        let key = InMemoryBackend::claim_key("workflow-1", &glirulus_core::TaskId::from("task-1"));
         let claim = claims.get(&key).unwrap();
         assert!(claim.expires_at.is_none());
     }
@@ -1365,7 +1365,7 @@ mod tests {
             .unwrap();
 
         let result = backend
-            .check_and_cancel("test-123", Some(sayiir_core::TaskId::from("task-1")))
+            .check_and_cancel("test-123", Some(glirulus_core::TaskId::from("task-1")))
             .await
             .unwrap();
         assert!(
@@ -1392,7 +1392,7 @@ mod tests {
         assert_eq!(cancelled_by, &Some("system".to_string()));
         assert_eq!(
             interrupted_at_task,
-            &Some(sayiir_core::TaskId::from("task-1"))
+            &Some(glirulus_core::TaskId::from("task-1"))
         );
 
         assert!(
@@ -1459,13 +1459,13 @@ mod tests {
 
         let mut snapshot1 = WorkflowSnapshot::new("workflow-1", "hash-abc".into());
         snapshot1.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-1"),
+            task_id: glirulus_core::TaskId::from("task-1"),
         });
         backend.save_snapshot(&mut snapshot1).await.unwrap();
 
         let mut snapshot2 = WorkflowSnapshot::new("workflow-2", "hash-abc".into());
         snapshot2.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-2"),
+            task_id: glirulus_core::TaskId::from("task-2"),
         });
         backend.save_snapshot(&mut snapshot2).await.unwrap();
 
@@ -1589,14 +1589,14 @@ mod tests {
         let backend = InMemoryBackend::new();
         let mut snapshot = WorkflowSnapshot::new("test-123", "hash-abc".into());
         snapshot.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-3"),
+            task_id: glirulus_core::TaskId::from("task-3"),
         });
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-1"),
+            glirulus_core::TaskId::from("task-1"),
             bytes::Bytes::from("out1"),
         );
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-2"),
+            glirulus_core::TaskId::from("task-2"),
             bytes::Bytes::from("out2"),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -1624,15 +1624,15 @@ mod tests {
         };
 
         assert_eq!(completed_tasks.len(), 2);
-        assert!(completed_tasks.contains_key(&sayiir_core::TaskId::from("task-1")));
-        assert!(completed_tasks.contains_key(&sayiir_core::TaskId::from("task-2")));
+        assert!(completed_tasks.contains_key(&glirulus_core::TaskId::from("task-1")));
+        assert!(completed_tasks.contains_key(&glirulus_core::TaskId::from("task-2")));
         assert!(matches!(
             position,
-            ExecutionPosition::AtTask { task_id } if *task_id == sayiir_core::TaskId::from("task-3")
+            ExecutionPosition::AtTask { task_id } if *task_id == glirulus_core::TaskId::from("task-3")
         ));
         assert_eq!(
             last_completed_task_id,
-            &Some(sayiir_core::TaskId::from("task-2"))
+            &Some(glirulus_core::TaskId::from("task-2"))
         );
     }
 
@@ -1645,10 +1645,10 @@ mod tests {
         let backend = InMemoryBackend::new();
         let mut snapshot = WorkflowSnapshot::new("test-123", "hash-abc".into());
         snapshot.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-2"),
+            task_id: glirulus_core::TaskId::from("task-2"),
         });
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-1"),
+            glirulus_core::TaskId::from("task-1"),
             bytes::Bytes::from("out1"),
         );
         snapshot.mark_paused(&PauseRequest::new(
@@ -1675,12 +1675,12 @@ mod tests {
         };
         assert!(matches!(
             position,
-            ExecutionPosition::AtTask { task_id } if *task_id == sayiir_core::TaskId::from("task-2")
+            ExecutionPosition::AtTask { task_id } if *task_id == glirulus_core::TaskId::from("task-2")
         ));
-        assert!(completed_tasks.contains_key(&sayiir_core::TaskId::from("task-1")));
+        assert!(completed_tasks.contains_key(&glirulus_core::TaskId::from("task-1")));
         assert_eq!(
             last_completed_task_id,
-            &Some(sayiir_core::TaskId::from("task-1"))
+            &Some(glirulus_core::TaskId::from("task-1"))
         );
 
         // Verify persisted state matches
@@ -1752,7 +1752,7 @@ mod tests {
 
         // check_and_cancel should process the cancel signal
         let cancelled = backend
-            .check_and_cancel("test-123", Some(sayiir_core::TaskId::from("task-1")))
+            .check_and_cancel("test-123", Some(glirulus_core::TaskId::from("task-1")))
             .await
             .unwrap();
         assert!(cancelled, "cancel should succeed");
@@ -1829,7 +1829,7 @@ mod tests {
             bytes::Bytes::from(vec![1]),
         );
         snapshot1.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-1"),
+            task_id: glirulus_core::TaskId::from("task-1"),
         });
         backend.save_snapshot(&mut snapshot1).await.unwrap();
 
@@ -1839,7 +1839,7 @@ mod tests {
             bytes::Bytes::from(vec![2]),
         );
         snapshot2.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-2"),
+            task_id: glirulus_core::TaskId::from("task-2"),
         });
         backend.save_snapshot(&mut snapshot2).await.unwrap();
 
@@ -1952,13 +1952,13 @@ mod tests {
         // Park at a delay that expires in the future
         let wake_at = Utc::now() + chrono::Duration::hours(1);
         snapshot.update_position(ExecutionPosition::AtDelay {
-            delay_id: sayiir_core::TaskId::from("wait_1h"),
+            delay_id: glirulus_core::TaskId::from("wait_1h"),
             entered_at: Utc::now(),
             wake_at,
-            next_task_id: Some(sayiir_core::TaskId::from("next_step")),
+            next_task_id: Some(glirulus_core::TaskId::from("next_step")),
         });
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("wait_1h"),
+            glirulus_core::TaskId::from("wait_1h"),
             bytes::Bytes::from(vec![42]),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -1985,13 +1985,13 @@ mod tests {
         // Park at a delay that has already expired
         let wake_at = Utc::now() - chrono::Duration::seconds(1);
         snapshot.update_position(ExecutionPosition::AtDelay {
-            delay_id: sayiir_core::TaskId::from("wait_done"),
+            delay_id: glirulus_core::TaskId::from("wait_done"),
             entered_at: Utc::now() - chrono::Duration::seconds(2),
             wake_at,
-            next_task_id: Some(sayiir_core::TaskId::from("process")),
+            next_task_id: Some(glirulus_core::TaskId::from("process")),
         });
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("wait_done"),
+            glirulus_core::TaskId::from("wait_done"),
             bytes::Bytes::from(vec![42]),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -2004,7 +2004,7 @@ mod tests {
         // The delay has expired, so the position should have been advanced to "process"
         assert_eq!(tasks.len(), 1);
         assert_eq!(&*tasks[0].instance_id, "workflow-1");
-        assert_eq!(tasks[0].task_id, sayiir_core::TaskId::from("process"));
+        assert_eq!(tasks[0].task_id, glirulus_core::TaskId::from("process"));
 
         // Verify position was advanced in the snapshot
         let loaded = backend.load_snapshot("workflow-1").await.unwrap();
@@ -2013,7 +2013,7 @@ mod tests {
                 position: ExecutionPosition::AtTask { task_id },
                 ..
             } => {
-                assert_eq!(*task_id, sayiir_core::TaskId::from("process"));
+                assert_eq!(*task_id, glirulus_core::TaskId::from("process"));
             }
             other => panic!("Expected AtTask position, got {other:?}"),
         }
@@ -2031,13 +2031,13 @@ mod tests {
         // Park at a delay that has expired AND has no next task (delay is last node)
         let wake_at = Utc::now() - chrono::Duration::seconds(1);
         snapshot.update_position(ExecutionPosition::AtDelay {
-            delay_id: sayiir_core::TaskId::from("final_wait"),
+            delay_id: glirulus_core::TaskId::from("final_wait"),
             entered_at: Utc::now() - chrono::Duration::seconds(2),
             wake_at,
             next_task_id: None,
         });
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("final_wait"),
+            glirulus_core::TaskId::from("final_wait"),
             bytes::Bytes::from(vec![42]),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -2075,7 +2075,7 @@ mod tests {
                 WorkflowSnapshot::with_initial_input(id, "hash".into(), input.clone());
             snapshot.task_priority = Some(priority);
             snapshot.update_position(ExecutionPosition::AtTask {
-                task_id: sayiir_core::TaskId::from("task-a"),
+                task_id: glirulus_core::TaskId::from("task-a"),
             });
             backend.save_snapshot(&mut snapshot).await.unwrap();
         }
@@ -2101,7 +2101,7 @@ mod tests {
             WorkflowSnapshot::with_initial_input("wf-high", "hash".into(), input.clone());
         high.task_priority = Some(1);
         high.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-a"),
+            task_id: glirulus_core::TaskId::from("task-a"),
         });
         // updated_at stays at "now"
         backend.save_snapshot(&mut high).await.unwrap();
@@ -2110,7 +2110,7 @@ mod tests {
         let mut low = WorkflowSnapshot::with_initial_input("wf-low", "hash".into(), input.clone());
         low.task_priority = Some(5);
         low.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-a"),
+            task_id: glirulus_core::TaskId::from("task-a"),
         });
         // Simulate long wait: push updated_at 10 minutes into the past.
         low.updated_at = (chrono::Utc::now().timestamp() - 600) as u64;
@@ -2142,7 +2142,7 @@ mod tests {
         let mut snapshot = WorkflowSnapshot::with_initial_input("wf-1", "hash".into(), input);
         snapshot.task_priority = Some(3);
         snapshot.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("task-a"),
+            task_id: glirulus_core::TaskId::from("task-a"),
         });
         backend.save_snapshot(&mut snapshot).await.unwrap();
 
@@ -2165,7 +2165,7 @@ mod tests {
         let mut snap1 =
             WorkflowSnapshot::with_initial_input("wf-gpu", "h1".into(), bytes::Bytes::from("1"));
         snap1.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("t1"),
+            task_id: glirulus_core::TaskId::from("t1"),
         });
         snap1.task_tags = vec!["gpu".into()];
         backend.save_snapshot(&mut snap1).await.unwrap();
@@ -2174,7 +2174,7 @@ mod tests {
         let mut snap2 =
             WorkflowSnapshot::with_initial_input("wf-cpu", "h1".into(), bytes::Bytes::from("2"));
         snap2.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("t2"),
+            task_id: glirulus_core::TaskId::from("t2"),
         });
         snap2.task_tags = vec!["cpu".into()];
         backend.save_snapshot(&mut snap2).await.unwrap();
@@ -2195,7 +2195,7 @@ mod tests {
         let mut snap1 =
             WorkflowSnapshot::with_initial_input("wf-tagged", "h1".into(), bytes::Bytes::from("1"));
         snap1.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("t1"),
+            task_id: glirulus_core::TaskId::from("t1"),
         });
         snap1.task_tags = vec!["gpu".into()];
         backend.save_snapshot(&mut snap1).await.unwrap();
@@ -2203,7 +2203,7 @@ mod tests {
         let mut snap2 =
             WorkflowSnapshot::with_initial_input("wf-plain", "h1".into(), bytes::Bytes::from("2"));
         snap2.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("t2"),
+            task_id: glirulus_core::TaskId::from("t2"),
         });
         backend.save_snapshot(&mut snap2).await.unwrap();
 
@@ -2223,7 +2223,7 @@ mod tests {
         let mut snap =
             WorkflowSnapshot::with_initial_input("wf-plain", "h1".into(), bytes::Bytes::from("1"));
         snap.update_position(ExecutionPosition::AtTask {
-            task_id: sayiir_core::TaskId::from("t1"),
+            task_id: glirulus_core::TaskId::from("t1"),
         });
         backend.save_snapshot(&mut snap).await.unwrap();
 
@@ -2299,13 +2299,13 @@ mod tests {
         let backend = InMemoryBackend::new();
         let mut snapshot = WorkflowSnapshot::new("wf-1", "hash".into());
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-1"),
+            glirulus_core::TaskId::from("task-1"),
             bytes::Bytes::from("out1"),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
 
         let result = backend
-            .load_task_result("wf-1", &sayiir_core::TaskId::from("task-1"))
+            .load_task_result("wf-1", &glirulus_core::TaskId::from("task-1"))
             .await
             .unwrap();
         assert_eq!(result, Some(bytes::Bytes::from("out1")));
@@ -2318,7 +2318,7 @@ mod tests {
         backend.save_snapshot(&mut snapshot).await.unwrap();
 
         let result = backend
-            .load_task_result("wf-1", &sayiir_core::TaskId::from("no-such-task"))
+            .load_task_result("wf-1", &glirulus_core::TaskId::from("no-such-task"))
             .await
             .unwrap();
         assert!(result.is_none());
@@ -2328,7 +2328,7 @@ mod tests {
     async fn test_load_task_result_nonexistent_instance() {
         let backend = InMemoryBackend::new();
         let result = backend
-            .load_task_result("no-such-wf", &sayiir_core::TaskId::from("task-1"))
+            .load_task_result("no-such-wf", &glirulus_core::TaskId::from("task-1"))
             .await;
         assert!(matches!(result, Err(BackendError::NotFound(_))));
     }
@@ -2340,7 +2340,7 @@ mod tests {
         // Create workflow with a completed task
         let mut snapshot = WorkflowSnapshot::new("wf-1", "hash".into());
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-1"),
+            glirulus_core::TaskId::from("task-1"),
             bytes::Bytes::from("out1"),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -2351,7 +2351,7 @@ mod tests {
 
         // Task result should still be accessible from cache
         let result = backend
-            .load_task_result("wf-1", &sayiir_core::TaskId::from("task-1"))
+            .load_task_result("wf-1", &glirulus_core::TaskId::from("task-1"))
             .await
             .unwrap();
         assert_eq!(result, Some(bytes::Bytes::from("out1")));
@@ -2363,7 +2363,7 @@ mod tests {
 
         let mut snapshot = WorkflowSnapshot::new("wf-1", "hash".into());
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-1"),
+            glirulus_core::TaskId::from("task-1"),
             bytes::Bytes::from("out1"),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -2372,7 +2372,7 @@ mod tests {
         backend.save_snapshot(&mut snapshot).await.unwrap();
 
         let result = backend
-            .load_task_result("wf-1", &sayiir_core::TaskId::from("task-1"))
+            .load_task_result("wf-1", &glirulus_core::TaskId::from("task-1"))
             .await
             .unwrap();
         assert_eq!(result, Some(bytes::Bytes::from("out1")));
@@ -2384,7 +2384,7 @@ mod tests {
 
         let mut snapshot = WorkflowSnapshot::new("wf-1", "hash".into());
         snapshot.mark_task_completed(
-            sayiir_core::TaskId::from("task-1"),
+            glirulus_core::TaskId::from("task-1"),
             bytes::Bytes::from("out1"),
         );
         backend.save_snapshot(&mut snapshot).await.unwrap();
@@ -2396,7 +2396,7 @@ mod tests {
         backend.delete_snapshot("wf-1").await.unwrap();
 
         let result = backend
-            .load_task_result("wf-1", &sayiir_core::TaskId::from("task-1"))
+            .load_task_result("wf-1", &glirulus_core::TaskId::from("task-1"))
             .await;
         assert!(matches!(result, Err(BackendError::NotFound(_))));
     }

@@ -8,10 +8,10 @@
 //! so racing workers short-circuit without blocking on a row lock.
 
 use chrono::{Duration, Utc};
-use sayiir_core::codec;
-use sayiir_core::snapshot::{ExecutionPosition, WorkflowSnapshot, WorkflowSnapshotState};
-use sayiir_core::task_claim::{AvailableTask, TaskClaim};
-use sayiir_persistence::{BackendError, SnapshotStore, TaskClaimStore};
+use glirulus_core::codec;
+use glirulus_core::snapshot::{ExecutionPosition, WorkflowSnapshot, WorkflowSnapshotState};
+use glirulus_core::task_claim::{AvailableTask, TaskClaim};
+use glirulus_persistence::{BackendError, SnapshotStore, TaskClaimStore};
 use sqlx::Row;
 
 use crate::backend::PostgresBackend;
@@ -53,7 +53,7 @@ where
     async fn claim_task(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
         ttl: Option<Duration>,
     ) -> Result<Option<TaskClaim>, BackendError> {
@@ -172,7 +172,7 @@ where
     async fn release_task_claim(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
     ) -> Result<(), BackendError> {
         // DELETE + owner disambiguation in one statement closes the
@@ -228,7 +228,7 @@ where
     async fn extend_task_claim(
         &self,
         instance_id: &str,
-        task_id: &sayiir_core::TaskId,
+        task_id: &glirulus_core::TaskId,
         worker_id: &str,
         additional_duration: Duration,
     ) -> Result<(), BackendError> {
@@ -292,6 +292,7 @@ where
         aging_interval: Duration,
         worker_tags: &[String],
     ) -> Result<Vec<AvailableTask>, BackendError> {
+        self.advance_ready_signal_waits(limit).await?;
         // Expired claims are picked up implicitly via the eligibility
         // predicate's `c.expires_at > now()` check — no explicit
         // garbage-collect needed here.
@@ -301,7 +302,7 @@ where
         let tag_filter = if worker_tags.is_empty() {
             ""
         } else {
-            "AND s.task_tags <@ $3"
+            "AND s.task_tags <@ $4"
         };
 
         // `FOR UPDATE OF s SKIP LOCKED` keeps statement-scope dedup —
@@ -327,6 +328,7 @@ where
                  SELECT s.instance_id, s.history_version, s.trace_parent
                  FROM sayiir_workflow_snapshots s
                  WHERE s.status = 'InProgress'
+                   AND ($3::bytea[] IS NULL OR s.definition_hash = ANY($3))
                    AND (
                        s.position_kind = 'AtTask'
                        OR (s.position_kind = 'AtDelay'
@@ -347,7 +349,13 @@ where
 
         let mut q = sqlx::query(&query)
             .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-            .bind(aging_secs);
+            .bind(aging_secs)
+            .bind(
+                self.eligible_definitions
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone(),
+            );
         if !worker_tags.is_empty() {
             q = q.bind(&worker_tags_vec);
         }
@@ -378,7 +386,7 @@ where
             // task_id we want to dispatch. All field captures from the
             // match pattern are `Copy` so the borrow on `snapshot.state`
             // is released before the move into build_available_task.
-            let task_id_to_dispatch: sayiir_core::TaskId = match &snapshot.state {
+            let task_id_to_dispatch: glirulus_core::TaskId = match &snapshot.state {
                 // Delay: if expired, advance past it
                 WorkflowSnapshotState::InProgress {
                     position:
@@ -411,11 +419,11 @@ where
                     completed_tasks,
                     ..
                 } => {
-                    if completed_tasks.contains_key(task_id) {
-                        continue;
-                    }
                     let task_id_copy = *task_id;
-                    if let Some(rs) = snapshot.task_retries.get(&task_id_copy)
+                    // A retained result still needs claimed continuation after a
+                    // crash between task checkpoint and workflow completion.
+                    if !completed_tasks.contains_key(task_id)
+                        && let Some(rs) = snapshot.task_retries.get(&task_id_copy)
                         && Utc::now() < rs.next_retry_at
                     {
                         continue;
@@ -443,7 +451,7 @@ where
     async fn wait_for_wakeup(
         &self,
         timeout: std::time::Duration,
-    ) -> Result<Option<sayiir_persistence::TaskWakeupHint>, BackendError> {
+    ) -> Result<Option<glirulus_persistence::TaskWakeupHint>, BackendError> {
         Ok(self.wakeup.wait(timeout).await)
     }
 
@@ -453,13 +461,13 @@ where
         fields(
             db.system = "postgresql",
             instance_id = %hint.instance_id,
-            task_id = %sayiir_core::TaskId::from_bytes(hint.task_id),
+            task_id = %glirulus_core::TaskId::from_bytes(hint.task_id),
         ),
         err(level = tracing::Level::ERROR),
     )]
     async fn find_hinted_task(
         &self,
-        hint: &sayiir_persistence::TaskWakeupHint,
+        hint: &glirulus_persistence::TaskWakeupHint,
     ) -> Result<Option<AvailableTask>, BackendError> {
         // Single round-trip on the NOTIFY hot path: eligibility check,
         // history-blob fetch, and per-task outputs all land in one
@@ -517,7 +525,7 @@ where
             // `Vec`, not `HashMap`: `hydrate_task_outputs` only iterates these.
             let mut outputs = Vec::with_capacity(ids.len());
             for (id_bytes, out_bytes) in ids.into_iter().zip(outs.into_iter()) {
-                let tid = sayiir_core::TaskId::from_slice(&id_bytes).map_err(|_| {
+                let tid = glirulus_core::TaskId::from_slice(&id_bytes).map_err(|_| {
                     BackendError::Backend(format!(
                         "sayiir_workflow_tasks.task_id for instance {} is {} bytes (expected 32)",
                         hint.instance_id,
@@ -529,16 +537,23 @@ where
             snapshot.hydrate_task_outputs(outputs);
         }
 
-        let hint_task_id = sayiir_core::TaskId::from_bytes(hint.task_id);
+        let hint_task_id = glirulus_core::TaskId::from_bytes(hint.task_id);
         let matches = match &snapshot.state {
             WorkflowSnapshotState::InProgress {
                 position: ExecutionPosition::AtTask { task_id },
-                completed_tasks,
                 ..
-            } => *task_id == hint_task_id && !completed_tasks.contains_key(task_id),
+            } => *task_id == hint_task_id,
             _ => false,
         };
         if !matches {
+            return Ok(None);
+        }
+        // NOTIFY announces a checkpoint, not permission to bypass its backoff.
+        // Completed tasks remain eligible for checkpoint-only continuation.
+        if snapshot.get_task_result(&hint_task_id).is_none()
+            && let Some(retry) = snapshot.task_retries.get(&hint_task_id)
+            && Utc::now() < retry.next_retry_at
+        {
             return Ok(None);
         }
 
@@ -567,7 +582,7 @@ where
 fn disambiguate_writeback(
     row: &sqlx::postgres::PgRow,
     instance_id: &str,
-    task_id: &sayiir_core::TaskId,
+    task_id: &glirulus_core::TaskId,
     worker_id: &str,
 ) -> Result<(), BackendError> {
     if row.get::<bool, _>("done") {
@@ -600,10 +615,10 @@ fn disambiguate_writeback(
 /// position with a resolvable input.
 fn build_available_task(
     snapshot: WorkflowSnapshot,
-    task_id: sayiir_core::TaskId,
+    task_id: glirulus_core::TaskId,
 ) -> Option<AvailableTask> {
     let completed_empty = match &snapshot.state {
-        sayiir_core::snapshot::WorkflowSnapshotState::InProgress {
+        glirulus_core::snapshot::WorkflowSnapshotState::InProgress {
             completed_tasks, ..
         } => completed_tasks.is_empty(),
         _ => return None,

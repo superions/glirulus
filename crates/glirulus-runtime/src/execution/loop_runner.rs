@@ -8,11 +8,11 @@ use std::future::Future;
 use std::ops::ControlFlow;
 
 use bytes::Bytes;
-use sayiir_core::codec::LoopDecision;
-use sayiir_core::error::{BoxError, CodecError, WorkflowError};
-use sayiir_core::snapshot::{ExecutionPosition, WorkflowSnapshot};
-use sayiir_core::workflow::{MaxIterationsPolicy, WorkflowContinuation};
-use sayiir_persistence::SnapshotStore;
+use glirulus_core::codec::LoopDecision;
+use glirulus_core::error::{BoxError, CodecError, WorkflowError};
+use glirulus_core::snapshot::{ExecutionPosition, WorkflowSnapshot};
+use glirulus_core::workflow::{MaxIterationsPolicy, WorkflowContinuation};
+use glirulus_persistence::SnapshotStore;
 
 use crate::error::RuntimeError;
 
@@ -23,9 +23,10 @@ use crate::error::RuntimeError;
 pub(crate) fn decode_loop_envelope(bytes: &[u8]) -> Result<(LoopDecision, Bytes), BoxError> {
     let &first = bytes.first().ok_or("empty loop envelope")?;
     match first {
-        // Binary tags produced by sayiir_core::codec::encode_loop_envelope.
-        0 | 1 => sayiir_core::codec::decode_loop_envelope(bytes),
-        // JSON format from bindings.
+        // Binary tags produced by glirulus_core::codec::encode_loop_envelope.
+        0 | 1 => glirulus_core::codec::decode_loop_envelope(bytes),
+        // JSON format from bindings is available only with the JSON codec feature.
+        #[cfg(feature = "json")]
         _ => {
             let v: serde_json::Value = serde_json::from_slice(bytes)?;
             let tag = v
@@ -40,6 +41,8 @@ pub(crate) fn decode_loop_envelope(bytes: &[u8]) -> Result<(LoopDecision, Bytes)
                 .ok_or("missing 'value' field in LoopResult JSON")?;
             Ok((decision, Bytes::from(serde_json::to_vec(inner)?)))
         }
+        #[cfg(not(feature = "json"))]
+        _ => Err("JSON loop envelopes require the `json` feature".into()),
     }
 }
 
@@ -75,7 +78,7 @@ pub(crate) fn resolve_loop_iteration(
     cfg: &LoopConfig<'_>,
 ) -> Result<ControlFlow<LoopExit, LoopNext>, RuntimeError> {
     let (decision, inner) = decode_loop_envelope(output).map_err(|e| CodecError::DecodeFailed {
-        task_id: sayiir_core::TaskId::from(cfg.id),
+        task_id: glirulus_core::TaskId::from(cfg.id),
         expected_type: "LoopEnvelope",
         source: e,
     })?;
@@ -85,7 +88,7 @@ pub(crate) fn resolve_loop_iteration(
             if iteration + 1 >= cfg.max_iterations {
                 match cfg.on_max {
                     MaxIterationsPolicy::Fail => Err(WorkflowError::MaxIterationsExceeded {
-                        loop_id: sayiir_core::TaskId::from(cfg.id),
+                        loop_id: glirulus_core::TaskId::from(cfg.id),
                         max_iterations: cfg.max_iterations,
                     }
                     .into()),
@@ -151,12 +154,12 @@ impl<B: SnapshotStore> LoopHooks for CheckpointingLoopHooks<'_, B> {
         let body_ser = body.to_serializable();
         for tid in &body_ser.task_ids() {
             self.snapshot
-                .remove_task_result(&sayiir_core::TaskId::from(*tid));
+                .remove_task_result(&glirulus_core::TaskId::from(*tid));
         }
     }
 
     async fn on_loop_exit(&mut self, loop_id: &str, output: &Bytes) -> Result<(), RuntimeError> {
-        let loop_id = sayiir_core::TaskId::from(loop_id);
+        let loop_id = glirulus_core::TaskId::from(loop_id);
         self.snapshot.clear_loop_iteration(&loop_id);
         self.snapshot.mark_task_completed(loop_id, output.clone());
         self.backend.save_snapshot(self.snapshot).await?;
@@ -169,14 +172,14 @@ impl<B: SnapshotStore> LoopHooks for CheckpointingLoopHooks<'_, B> {
         next_iteration: u32,
         body: &WorkflowContinuation,
     ) -> Result<(), RuntimeError> {
-        let loop_id_hash = sayiir_core::TaskId::from(loop_id);
+        let loop_id_hash = glirulus_core::TaskId::from(loop_id);
         self.snapshot
             .set_loop_iteration(loop_id_hash, next_iteration);
         if self.track_position {
             self.snapshot.update_position(ExecutionPosition::InLoop {
                 loop_id: loop_id_hash,
                 iteration: next_iteration,
-                next_task_id: Some(sayiir_core::TaskId::from(body.first_task_id())),
+                next_task_id: Some(glirulus_core::TaskId::from(body.first_task_id())),
             });
         }
         // Always persist: the cleared body task results and updated iteration
@@ -231,7 +234,7 @@ where
     }
 
     Err(WorkflowError::MaxIterationsExceeded {
-        loop_id: sayiir_core::TaskId::from(cfg.id),
+        loop_id: glirulus_core::TaskId::from(cfg.id),
         max_iterations: cfg.max_iterations,
     }
     .into())

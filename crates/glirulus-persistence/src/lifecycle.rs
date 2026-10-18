@@ -2,17 +2,16 @@
 //!
 //! [`prepare_run`] handles the snapshot-existence check + conflict-policy
 //! resolution that every binding needs to do at the start of a `run()`.
-//! The runtime (`sayiir-runtime`) and the Cloudflare Workers binding
-//! (`sayiir-cloudflare`) both used to carry their own copies of this
-//! logic; this module is the de-duplicated home.
+//! This module centralizes the logic shared by the runtime and the original
+//! upstream Cloudflare Workers binding; Glirulus does not include that binding.
 //!
 //! The error type [`RunConflict`] carries the three reasons a run can be
 //! rejected (`AlreadyExists`, `DefinitionMismatch`, backend I/O). Callers
 //! convert it into their own error envelopes via `From<RunConflict>`.
 
 use bytes::Bytes;
-use sayiir_core::snapshot::{ExecutionPosition, SignalKind, TaskHint, WorkflowSnapshot};
-use sayiir_core::workflow::{ConflictPolicy, WorkflowStatus};
+use glirulus_core::snapshot::{ExecutionPosition, SignalKind, TaskHint, WorkflowSnapshot};
+use glirulus_core::workflow::{ConflictPolicy, WorkflowStatus};
 
 use crate::{BackendError, SignalStore, SnapshotStore};
 
@@ -35,15 +34,15 @@ pub enum PrepareRunOutcome {
 #[derive(Debug)]
 pub enum RunConflict {
     /// The supplied `instance_id` failed the API-boundary length check.
-    InvalidInstanceId(sayiir_core::InvalidInstanceId),
+    InvalidInstanceId(glirulus_core::InvalidInstanceId),
     /// `Fail` policy and the instance id is already in use.
     AlreadyExists(String),
     /// The existing snapshot was produced from a different workflow definition.
     DefinitionMismatch {
         /// Definition hash the caller expected.
-        expected: sayiir_core::DefinitionHash,
+        expected: glirulus_core::DefinitionHash,
         /// Definition hash actually stored.
-        found: sayiir_core::DefinitionHash,
+        found: glirulus_core::DefinitionHash,
     },
     /// Backend I/O error.
     Backend(BackendError),
@@ -55,8 +54,8 @@ impl From<BackendError> for RunConflict {
     }
 }
 
-impl From<sayiir_core::InvalidInstanceId> for RunConflict {
-    fn from(e: sayiir_core::InvalidInstanceId) -> Self {
+impl From<glirulus_core::InvalidInstanceId> for RunConflict {
+    fn from(e: glirulus_core::InvalidInstanceId) -> Self {
         Self::InvalidInstanceId(e)
     }
 }
@@ -117,7 +116,7 @@ impl std::error::Error for RunConflict {
 /// or backend I/O failures.
 pub async fn prepare_run<B>(
     instance_id: &str,
-    definition_hash: sayiir_core::DefinitionHash,
+    definition_hash: glirulus_core::DefinitionHash,
     input_bytes: Bytes,
     first_task: TaskHint,
     backend: &B,
@@ -126,7 +125,7 @@ pub async fn prepare_run<B>(
 where
     B: SnapshotStore + SignalStore,
 {
-    sayiir_core::validate_instance_id(instance_id)?;
+    glirulus_core::validate_instance_id(instance_id)?;
     match backend.load_snapshot(instance_id).await {
         Ok(existing) => {
             if existing.definition_hash != definition_hash {
